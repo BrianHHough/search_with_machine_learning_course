@@ -928,3 +928,242 @@ This process works best when there are multiple judges, and overlapping judgemen
 - What fraction of results where relevant overall? Which queries performed best / worst?
 - What were the ranks of the first relevant results?
 - What kinds of mistakes did the search engine make? Can you identify potential causes?
+
+
+
+
+# Measuring Relevance
+- 2 paths to measure relevance:
+  - Try to pout ourselves or others in the minds of searchers and make their judgments
+  - Infer users' info needs from behavior (i.e. engagements in the platform)
+- We want to make decisions based on aggregate data (collected at whatever scale we can afford)
+  - Don't want decisions made based on one person's oponion (judge, user, or dev), or the highest paid person's opinion, or most expensive customer
+
+- 2 ways to collect judgments:
+  - Explicit human judgments: manually assign labels to rep sample of content you want to classify
+    - But, it's expensive (time + money) and requires human judges to put themselves in position of users
+  - Implicit behavioral judgments: mine user behavior (e.g. click data) to collect
+    - Low cost, and judges are users
+    - But, presentation bias since users only engage with content presented to them and conflates relevancy with desirability and other factors (i.e. user skiips relevant results and may decide to click on irrelevant results out of curiosity)
+  
+- What to collect in logs for search queries:
+  - **Query**: what the user typed into the search box, ​​what the application sent to the search engine.
+  - **Parameters**: any categories, facets, or other filters, as well as user-specified sort.
+  - **Session**: timestamp, session id, referrer URL, etc.
+  - **User**: id if user is logged in, IP address, device, browser, etc.
+  - **Results**: ids and titles of all displayed results (with positions), pagination or scrolling information, summary information like number of results and facet counts. In other words, log everything that might influence a user to pick a search result.
+  - **Engagement**: which results were clicked or had further engagement like a purchase.
+  - **System**: index version, names and versions of ML models, A/B treatments, etc.
+- Additional:
+  - Track original query and spelling suggestions (+ where those suggestions automatically applied or just suggested to the user as "did you mean?")
+  - Typeahead / autocomplete functionality, track both the characters the user typed and the selection completed
+
+- Key Metrics:
+  - **Precision (P)**: the proportion of search results that are relevant, with a common practice being to evaluate the precision of the top 10 results, or P@10, and to place higher importance on the ranking of these results using measures like average precision.
+  - **Recall (R)**: the percentage of all relevant documents that are successfully retrieved, though it's challenging to quantify as the total number of relevant documents is often unknown, and it's recognized that there is a trade-off between recall and precision, particularly vital in research and legal discovery.
+  - **Mean Reciprocal Rank (MRR)**: calculated by averaging the reciprocal (the reciprocal of x is 1/x) ranks of the first relevant result across multiple queries, serving well for both explicit and implicit feedback, and is particularly relevant when a single correct result is expected, with the preference being to count non-clicked queries as zero to avoid inflated performance measures. 
+  - **Discounted Cumulative Gain (DCG)**: evaluates the quality of search results by giving more weight to the relevance of higher-ranked results and is nuanced enough to accommodate graded relevance, making it a favorite for businesses where minor changes in search result quality can have significant revenue implications.
+  - Simple metrics:
+    - Track when return zero results. It's better to show nothing than to confidently show garbage... but in general, no results means something went wrong
+    - Find out if there's a way to satisfy user's needs or offer them something that's better than nothing.
+
+- Simple things to do now (shoestring budget)
+  - Collect behavioral data for implicit judgments: in-app analytics, log all results shown to the user (to show negative examples), or log representative random sample of sessions or users as large as resources practically allow.
+  - Establish ongoing query triage process: on regular basis (i.e. monthly), as well as when major changes or notice any sudden changes in biz metrics... have team each judge results for first 50 most frequent queries and for a random sample of less frequent queries. Calculate key metrics like percision and MRR, and keep those in a spreadsheet or dashboard.
+  - Pay close attention to agreement among judges: if folks disagree too often, need to align team.
+  - Test in dev before going to prod how a change affects metrics
+
+
+# Vectors and Token Weights
+- Lucene: search engine core of Solr, Elastic, and OpenSearch ([link](https://lucene.apache.org/))
+- Token-weighting approaches:
+  - tf-idf ([link](https://en.wikipedia.org/wiki/Tf%E2%80%93idf))
+  - BM25 ([link](https://en.wikipedia.org/wiki/Okapi_BM25))
+
+- Purpose here is to measure similarity between queries and documents to return docs closest to the query
+  - Similarity and closeness are what we are after
+  - Vectors: line segment from origin to a point in space (aka our documents and queries)
+    - We're using an abbreviation of the Pythangorean Theorem (a² + b² = c²), not to get the length of a vector, but to get its direction from the origin.
+    - In a 3D plane, vectors correspond to points on a unit sphere.
+    - Use the cosine of the angle (b/c degrees and radians aren't easy to work with directly), which is equal to:
+      - 1 at 0 degrees (same direction)
+        - A cosine of 1 means 2 vectors point in the same direction, meaning the two vectors are identical
+        - Sorting results by cosine is a way of sorting by similarity to the query.
+      - -1 at 180 degrees (opposite direction)
+      - 0 at 90 degress (right angle)
+    - Smaller angle = closer the cosine is to 1, and the more similar the two vectors are
+    - Larger angle = farther the cosine is from 1, and the more different the two vectors are
+  - Query_Doc_Similarity = cosine(θ)
+    - θ = degrees of angle made between Query line and Document line
+  - Vector Space: language as a space with thousands of dimensions, one for each word
+    - Documents and queries mean the space has hundereds or thousands of dimensions
+    - Vector is just like a point, and its coordinates are 1 for each words it contains and 0 for all other words, since most coords are 0s, these are sparse vectors
+
+Example: Represent pre-read materials as vectors like this:
+
+| Doc | brown | dog | dogs | fox | jumped | lazy | lead | out | over | paint |
+|:--|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Doc A | 1 |   | 1 | 1 | 1 | 1 | 1 |   | 1 |   |
+| Doc B |   | 1 |   | 1 | 1 |   | 1 |   |   |   |
+| Doc C | 1 |   |   |   |   |   | 1 |   |   |   |
+
+Example: Represent queries as vectors:
+
+| Doc | brown | dog | dogs | fox | jumped | lazy | lead | out | over | paint |
+|:--|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| brown dog  | 1 | 1 |   |   |   |   |   |   |   |   |
+| lazy fox   |   |   |   | 1 |   | 1 |   |   |   |   |
+
+- Operations with vectors:
+  - **Dot product**: scalar value resulting from multiplying the corresponding entries of the two sequences of numbers and then summing those products.
+    ```bash
+    a * b = (a1 * b1) + (a2 * b2) + ... + (an * bn)
+    ```
+  - **Cosine**: cosine of the angle θ between two vectors is a measure of how much they point in the same direction.
+    ```bash
+    cos(θ) = (a * b) / (||a|| * ||b||)
+    ```
+    - When both vectors are unit vectors (have a magnitude of 1), the dot product gives you the cosine of the angle between them.
+    - Math: `a * b = cos(θ)`
+
+  - Dot product of two vectors: form of multiplication where line up 2 arrays, multiply each pair of values from same dimension, and take sum of those products:
+
+  ```bash
+  a = (1,4,-2)
+  b = (-2,1,7)
+  a * b = 1 * (-2) + 4 * 1 + (-2) * 7
+  = -2 + 4 - 14 = -12
+  ```
+
+- To measure similarity between two vectors (a query and a document)...
+  - If two vectors are unit vectors (are of length 1), then you compute their dot product
+    - To measure length of vector, compute square root of dot product with itself (aka Pythagorean Theorem)
+  - If a vector isn't a unit vector (not of length 1), then normalize it by dividing the vector (dividing each element of the vector) by the length of the vector
+    - This looks like:
+      ```bash
+      ||a|| = √(a * a)
+      cos(θ) = (a * b) / ||a||||b||
+      ```
+    - Example: compute the cosine between the vectors `(1, -2, -2)` and `(2, -1, 2)`
+      - Normalize `(1,-2,2)` into unit vector, compute it's length as square root of sum of squares of the components.
+        - The magnitude of vector `a` is:
+        ```bash
+        ||a|| = √(1² + (-2)² + 2²) = √(9) = 3
+        ```
+        - Resulting `a` unit vector is: `(1/3, -2/3, 2/3)`
+      - Normalize `(2, -1, 2)` into unit vector
+        - The magnitude of vector `b` is:
+        ```bash
+        ||b|| = √(2² + (-1)² + 2²) = √(9) = 3
+        ```
+        - Resulting `b` unit vector is: `(2/3, -1/3, 2/3)`
+      - Take dot product to obtain cosine: 
+        ```bash
+        dp = a * b = (1/3 * 2/3) + (-2/3 * -1/3) + (2/3 * 2/3)
+        dp = a * b = (2/9) + (2/9) + (4/9)
+        dp = a * b = (8/9)
+        dp = 8/9 != 0
+        ```
+      - The dot product (aka cosine) is 8/9, and does not qual 0, implying that the vectors are not orthogonal (not at right angles to each other), and have positive cosine similarity, meaning there is an acute angle between them.
+
+- Use `tf-idf` to assign token weights for coordinates instead of giving them a weight of 1
+  - Give weight (significance) to tokens we believe to be important.
+  - A token repeated in a doc is more important to a doc. Measure this as a term frequency (`tf`), optionally normalizing to the doc length.
+  - A token occuring in fewer docs in index is more important to the docs in which it occurs. Measure this as the inverse doc frequency (`idf`), and use the negative of the logarithm of the inverse document frequency.
+  - The `tf-idf` is the product of these two quantities: `tf * idf`
+
+- Example:
+
+
+| Documents | Analysis | Equation |
+|----------|----------|----------|
+| dog, dogs, lazy, out, ... | Occurs in 1 document | -log(1/3) = 0.477 |
+| brown, fox, jumped, lead | Occurs in 2 documents | -log(2/3) = 0.176 |
+| red | Occurs in 3 documents | -log(3/3) = 0 |
+
+To analyze the `tf-idf` scores, let's review the data again:
+
+| Doc | brown | dog | dogs | fox | jumped | lazy | lead | out | over | paint |
+|:--|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Doc A | 1 |   | 1 | 1 | 1 | 1 | 1 |   | 1 |   |
+| Doc B |   | 1 |   | 1 | 1 |   | 1 |   |   |   |
+| Doc C | 1 |   |   |   |   |   | 1 |   |   |   |
+
+### Calculate the `tf-idf` score of "dog"
+- "dog" appears in only 1 doc (Doc B) of the 3
+- Calculate this with the equation:
+  ```bash
+  IDF(t) = -log(N/nt)
+    N = number of docs in collection
+    nt = number of docs where term t appears
+  IDF = -log(1/3)
+  IDF = -(-0.477)
+  IDF = 0.477
+
+  TF assumed to be 1
+  TF-IDF = 1 * 0.477
+  TF-IDF = 0.477
+  ```
+
+### Calculate the `tf-idf` score of "fox"
+- "fox" appears in 2 docs (Doc A and B) of the 3
+- Calculate this with the equation:
+  ```bash
+  IDF(t) = -log(N/nt)
+    N = number of docs in collection
+    nt = number of docs where term t appears
+  IDF = -log(2/3)
+  IDF = -(-0.176)
+  IDF = 0.176
+
+  TF assumed to be 1
+  TF-IDF = 1 * 0.176
+  TF-IDF = 0.176
+  ```
+
+### Calculate the `tf-idf` score of "lead"
+- "lead" occurs in all 3 docs (3/3)
+- Calculate this with the equation:
+  ```bash
+  IDF(t) = -log(N/nt)
+    N = number of docs in collection
+    nt = number of docs where term t appears
+  IDF = -log(3/3)
+  IDF = -(0)
+  IDF = 0
+
+  TF assumed to be 1
+  TF-IDF = 1 * 0
+  TF-IDF = 0
+  ```
+
+- In general, `tf-idf` favors words repeated in docs (making tf higher), but infrequent in the index (making idf higher)
+- Indexing is an opportunity to compute tf values for reach doc token, and compute idf values for each token when all docs are indexed.
+  - To use values for ranking, important they be efficiently available at run time, meaning we store weights as payloads in the inverted index.
+  - Search engine should do this automatically but this is an FYI
+- Document size matters - the tf size can be normalized by doc length... if this doesn't happen, then `tf * idf` score can favor long docs over short ones, leading to inaccurate relevant results.
+  - Normalizing tf by doc length is contentious, but important to consider
+
+# How Search Engines Work
+- Most engines have multi-phase ranking approach:
+  - Start with relatively cheap scoring function (`tf-idf` or `BM25`)
+  - Reduce results to the top scoring docs from that function
+  - Proceed with a series of more sophisticated and expensive scoring functions on successively smaller subsets of results
+- OpenSearch calls this above rescoring, or cascading ranking - results cascade fromone ranker to the next until final results returned.
+- Multiphase ranking approach is computationally efficient, addresses concerns like search result diversity and business rules
+- After many changes and tweaks, Machine learning comes in so that humans make relevance judgments and machine optimizes a scoring function based on those judgments.
+
+# Query-Dependent vs. Query-Independent Signals
+- **Query-dependent signals**: relate the query to the document and are good for determining relevance.
+  - Include the tf-idf and BM25 scores, and can be simpler (e.g. # of query tokens that overlap with tokens in the doc's title field) or more complex (e.g. cosine usng a machine-learned vector space)
+  - Tend to be at the heart of relevance, focusing on the relationship between doc and query.
+- **Query-independent signals**: ignore the query and are good for determining desirability.
+  - Include a doc's popularity, or in context like ecommerce - the price, sales, rank
+  - Less about relevance and more about desirability
+  - Indicate which relevant results users actually want
+  - Drive clicks and purchases just as much as relevance, so these signals make a big difference
+  - Can compute these offline, so it's cheap and easy to use them for sorting results at run-time.
+- Strategy: use query-dependent signals to determine set of relevant results, and then use query-independent signals to sort the relevant results by their desirability.
+
+# Common Techniques
+- 
