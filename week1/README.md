@@ -2,7 +2,7 @@
 
 Check to make sure the indexes are there: `GET /_cat/indices?v`
 This should return something like this:
-```json
+```bash
 health status index                                     uuid                   pri rep docs.count docs.deleted store.size pri.store.size
 green  open   .kibana_-152937574_admintenant_1          kUnDXzogTjShsBI7mcUV0g   1   0          1            0      5.1kb          5.1kb
 green  open   .kibana_92668751_admin_1                  ZLgmJA-2TWCALeNAxfomcg   1   0         59            0     34.1kb         34.1kb
@@ -1166,4 +1166,322 @@ To analyze the `tf-idf` scores, let's review the data again:
 - Strategy: use query-dependent signals to determine set of relevant results, and then use query-independent signals to sort the relevant results by their desirability.
 
 # Common Techniques
-- 
+- **Analyzers**: Refine the quality of tokens extracted from text for improved indexing and ranking by utilizing stemming, punctuation handling, and NLP tools, mindful of language nuances and reindexing needs.
+- **Field and document boosting**: Adjust search importance of specific fields or documents to enhance relevance signals, using a straightforward approach with significant impact.
+- **Content understanding**: Leverage external resources, rules, or machine learning to enrich content representation in the index for better retrieval and ranking.
+- **Synonyms**: Enhance recall by mapping different terms to the same concepts, but manage synonym lists carefully to avoid contextually inappropriate matches.
+- **Autophrasing**: Increase precision by identifying and treating multi-token phrases as single semantic units in queries, such as “dress shirt.”
+- **Query understanding**: Improve how queries are interpreted and matched using external resources, rules, or machine learning to reflect user intent better.
+- **Learning to rank (LTR)**: Employ machine learning for scalable and systematic ranking optimization, based on available data.
+- **Pseudo relevance feedback**: Utilize initial search results to refine and discover more pertinent information, despite higher computational costs.
+- **Experimentation**: Test different indexing and ranking strategies through offline analysis and online A/B testing to find the most effective approach.
+- **Manual overrides**: Apply direct, specific adjustments to search responses for immediate problem-solving, avoiding over-reliance that can lead to complex management issues.
+- **User experience**: Address search challenges not only with retrieval and ranking but also through user interface features like autocomplete, faceted search, and spelling correction.
+
+# Relevance Tuning Pitfalls
+- **Overfitting**: Avoid crafting models that only excel on specific training data without generalizing well to new, real-world data.
+- **Failure to iterate**: Embrace an agile, iterative process for relevance tuning, understanding that initial attempts are unlikely to be perfect.
+- **Premature Optimization**: Resist tuning relevance too finely before having substantial data and user feedback to guide decisions.
+- **Relying on anecdotal data (anecdata)**: Base relevance adjustments on comprehensive data rather than isolated, possibly non-representative, anecdotes.
+- **Lack of tracking or infrastructure**: Ensure the necessary infrastructure for tracking and analyzing search data is in place before attempting relevance tuning.
+- **Ignorance of tradeoffs**: Recognize the inherent tradeoffs in relevance tuning, especially between precision and recall, and make informed decisions accordingly.
+- **Pursuing diminishing returns**: Be aware of the point at which further investment in relevance tuning yields progressively smaller benefits.
+- **Tunnel vision**: Consider the larger context of search sessions and user interactions beyond the search box when addressing relevance.
+- **Configuration issues**: Verify that poor search performance isn't due to basic configuration errors before delving into more complex relevance issues.
+
+# Multi-Phase Ranking and LTR
+
+Goal: apply multi-phase ranking to implement learning to rank (LTR) by combining a rules-based approach with a machine learning approach.
+
+- using a multi-phase ranking appraoch manages the tradeoff between model quality and efficiency/speed.
+  - Example: 1st ranker uses BM25, then next ranker could feed its 1000 top-scoring results to a classifier, which could feed top 100 results to a more expensive model to obtain final ranking.
+  - Stakes increase when focus on the top few results (huge engagement drop between first and second positions)
+  - OpenSearch has a **rescoring framework** so that we don't need to fetch a large number of results, score them, send them onto the next ranker, etc. all manually.
+
+## Rescoring
+- Using values in a doc, along with a user-defined function, as part of scoring
+- OpenSearch/Elastic calls this Function Score query - which can be expensive, making it a good candidate for rescoring
+- Basic tool for multi-phase ranking: after scoring using one approach, pick off its top-scoring results and rescore them with another approach.
+
+### Run baseline simple match all query on the `searchml_test` index
+
+If this index doesn't exist yet, create this in the OpenSearch console:
+```bash
+PUT /searchml_test/_doc/doc_a
+{
+  "id": "doc_a",
+  "title": "Fox and Hounds",
+  "body": "The quick red fox jumped over the lazy brown dogs.",
+  "price": "5.99",
+  "in_stock": "true",
+  "category": "childrens"}
+
+PUT /searchml_test/_doc/doc_b
+{
+    "id": "doc_b",
+    "title": "Fox wins championship",
+    "body": "Wearing all red, the Fox jumped out to a lead in the race over the Dog.",
+    "price": "15.13",
+    "in_stock": "true",
+    "category": "sports"}
+
+PUT /searchml_test/_doc/doc_c
+{
+    "id": "doc_c",
+    "title": "Lead Paint Removal",
+    "body": "All lead must be removed from the brown and red paint.",
+    "price": "150.21",
+    "in_stock": "false",
+    "category": "instructional"}
+
+PUT /searchml_test/_doc/doc_d
+{
+        "id": "doc_d",
+        "title": "The Three Little Pigs Revisted",
+        "price": "3.51",
+        "in_stock": "true",
+        "body": "The big, bad wolf huffed and puffed and blew the house down. The end.",
+        "category": "childrens"}
+```
+
+By running this baseline query:
+```bash
+GET searchml_test/_search
+{
+  "query": {
+      "bool": {
+          "must": [
+              {"match_all": {}}
+          ],
+          "filter": [
+              {"term": {"category": "childrens"}}
+          ]
+      }
+  }
+}
+```
+This is the output:
+```json
+{
+  "took": 2,
+  "timed_out": false,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": {
+      "value": 2,
+      "relation": "eq"
+    },
+    "max_score": 1,
+    "hits": [
+      {
+        "_index": "searchml_test",
+        "_id": "doc_a",
+        "_score": 1,
+        "_source": {
+          "id": "doc_a",
+          "title": "Fox and Hounds",
+          "body": "The quick red fox jumped over the lazy brown dogs.",
+          "price": "5.99",
+          "in_stock": "true",
+          "category": "childrens"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_d",
+        "_score": 1,
+        "_source": {
+          "id": "doc_d",
+          "title": "The Three Little Pigs Revisted",
+          "price": "3.51",
+          "in_stock": "true",
+          "body": "The big, bad wolf huffed and puffed and blew the house down. The end.",
+          "category": "childrens"
+        }
+      }
+    ]
+  }
+}
+```
+
+Now, run a rescoring query:
+
+```bash
+POST searchml_test/_search
+{
+  "query": {
+      "bool": {
+          "must": [
+              {"match_all": {}}
+          ],
+          "filter": [
+              {"term": {"category": "childrens"}}
+          ]
+      }
+  },
+  "rescore": {
+    "query": {
+      "rescore_query":{
+        "function_score":{
+          "field_value_factor": {
+            "field": "price",
+            "missing": 1
+          }
+        }
+        
+      },
+      "query_weight": 1.0,
+      "rescore_query_weight": 2.0
+    },
+    "window_size": 1 
+  }
+}
+```
+
+Output of this is:
+```json
+{
+  "took": 105,
+  "timed_out": false,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": {
+      "value": 2,
+      "relation": "eq"
+    },
+    "max_score": 12.98,
+    "hits": [
+      {
+        "_index": "searchml_test",
+        "_id": "doc_a",
+        "_score": 12.98,
+        "_source": {
+          "id": "doc_a",
+          "title": "Fox and Hounds",
+          "body": "The quick red fox jumped over the lazy brown dogs.",
+          "price": "5.99",
+          "in_stock": "true",
+          "category": "childrens"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_d",
+        "_score": 1,
+        "_source": {
+          "id": "doc_d",
+          "title": "The Three Little Pigs Revisted",
+          "price": "3.51",
+          "in_stock": "true",
+          "body": "The big, bad wolf huffed and puffed and blew the house down. The end.",
+          "category": "childrens"
+        }
+      }
+    ]
+  }
+}
+```
+
+### 🐞 Debugging: Error running rescoring query: `illegal_argument_exception` - Text fields are not optimised for operations that require per-document field data like aggregations and sorting
+
+I got this error after doing the PUTs and then running the above rescoring query:
+```json
+{
+  "error": {
+    "root_cause": [
+      {
+        "type": "illegal_argument_exception",
+        "reason": "Text fields are not optimised for operations that require per-document field data like aggregations and sorting, so these operations are disabled by default. Please use a keyword field instead. Alternatively, set fielddata=true on [price] in order to load field data by uninverting the inverted index. Note that this can use significant memory."
+      }
+    ],
+    "type": "search_phase_execution_exception",
+    "reason": "all shards failed",
+    "phase": "query",
+    "grouped": true,
+    "failed_shards": [
+      {
+        "shard": 0,
+        "index": "searchml_test",
+        "node": "aTFYW_tGScGCPHJazjKLsQ",
+        "reason": {
+          "type": "illegal_argument_exception",
+          "reason": "Text fields are not optimised for operations that require per-document field data like aggregations and sorting, so these operations are disabled by default. Please use a keyword field instead. Alternatively, set fielddata=true on [price] in order to load field data by uninverting the inverted index. Note that this can use significant memory."
+        }
+      }
+    ],
+    "caused_by": {
+      "type": "illegal_argument_exception",
+      "reason": "Text fields are not optimised for operations that require per-document field data like aggregations and sorting, so these operations are disabled by default. Please use a keyword field instead. Alternatively, set fielddata=true on [price] in order to load field data by uninverting the inverted index. Note that this can use significant memory.",
+      "caused_by": {
+        "type": "illegal_argument_exception",
+        "reason": "Text fields are not optimised for operations that require per-document field data like aggregations and sorting, so these operations are disabled by default. Please use a keyword field instead. Alternatively, set fielddata=true on [price] in order to load field data by uninverting the inverted index. Note that this can use significant memory."
+      }
+    }
+  },
+  "status": 400
+}
+```
+
+This is because `price` is treated as a text field, not for numeric operations to perform sorting or aggregations. It seems the mapping for index not been set explicitly so the `price` field can't be inferred by OpenSearch b/c of the quotes.
+
+To fix this:
+- Delete Index:
+  ```bash
+  DELETE /searchml_test
+  ```
+
+- Define correct mappings for index before index any docs - tell OS the `price` field is numeric and not text
+  ```bash
+  PUT /searchml_test
+  {
+    "mappings": {
+      "properties": {
+        "id": { "type": "keyword" },
+        "title": { "type": "text" },
+        "body": { "type": "text" },
+        "price": { "type": "float" },
+        "in_stock": { "type": "boolean" },
+        "category": { "type": "keyword" }
+      }
+    }
+  }
+  ```
+
+  This should give an output:
+  ```json
+  {
+    "acknowledged": true,
+    "shards_acknowledged": true,
+    "index": "searchml_test"
+  }
+  ```
+
+- Re-index docs with correct mappings
+  ```bash
+  PUT /searchml_test/_doc/doc_a
+  {
+    "id": "doc_a",
+    "title": "Fox and Hounds",
+    "body": "The quick red fox jumped over the lazy brown dogs.",
+    "price": 5.99,
+    "in_stock": true,
+    "category": "childrens"
+  }
+
+  ... [Repeat for other documents]
+  ```
+
+- Run `rescore` query again after mappings and docs correctly set up
+  - Change "window_size": 1 to a larger number to rescore more than just the top document, as window_size defines the number of top documents to be rescored.
+
+  
