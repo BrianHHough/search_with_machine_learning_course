@@ -1244,7 +1244,8 @@ PUT /searchml_test/_doc/doc_d
         "category": "childrens"}
 ```
 
-By running this baseline query:
+## Baseline query
+Running this baseline query as the foundation
 ```bash
 GET searchml_test/_search
 {
@@ -1309,7 +1310,11 @@ This is the output:
 }
 ```
 
-Now, run a rescoring query:
+## Run a rescoring query:
+- `function_score` is included in the query
+- original score matches `query_weight` are worth 1 * score (1x), and second query scores are worth 2 * score (2x):
+  - First doc should be scored like this: (1x1) + 2xprice = (1x1) + 2 * 5.99 = 12.98
+  - Second doc scored simply as original score (1.0)
 
 ```bash
 POST searchml_test/_search
@@ -1484,4 +1489,3090 @@ To fix this:
 - Run `rescore` query again after mappings and docs correctly set up
   - Change "window_size": 1 to a larger number to rescore more than just the top document, as window_size defines the number of top documents to be rescored.
 
-  
+
+## Cascade twice example
+- Remove "childrens" filter to first get all docs, then boost on a phrase and then boost on price:
+
+Baseline:
+```bash
+POST searchml_test/_search
+{
+  "query": {
+      "match_all": {}
+  }
+}
+```
+This yields 4 docs, all scored as 1.0:
+```json
+{
+  "took": 4,
+  "timed_out": false,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": {
+      "value": 4,
+      "relation": "eq"
+    },
+    "max_score": 1,
+    "hits": [
+      {
+        "_index": "searchml_test",
+        "_id": "doc_a",
+        "_score": 1,
+        "_source": {
+          "id": "doc_a",
+          "title": "Fox and Hounds",
+          "body": "The quick red fox jumped over the lazy brown dogs.",
+          "price": "5.99",
+          "in_stock": "true",
+          "category": "childrens"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_b",
+        "_score": 1,
+        "_source": {
+          "id": "doc_b",
+          "title": "Fox wins championship",
+          "body": "Wearing all red, the Fox jumped out to a lead in the race over the Dog.",
+          "price": "15.13",
+          "in_stock": "true",
+          "category": "sports"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_c",
+        "_score": 1,
+        "_source": {
+          "id": "doc_c",
+          "title": "Lead Paint Removal",
+          "body": "All lead must be removed from the brown and red paint.",
+          "price": "150.21",
+          "in_stock": "false",
+          "category": "instructional"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_d",
+        "_score": 1,
+        "_source": {
+          "id": "doc_d",
+          "title": "The Three Little Pigs Revisted",
+          "price": "3.51",
+          "in_stock": "true",
+          "body": "The big, bad wolf huffed and puffed and blew the house down. The end.",
+          "category": "childrens"
+        }
+      }
+    ]
+  }
+}
+```
+
+Rescore:
+```bash
+POST searchml_test/_search
+{
+  "query": {
+      "match_all": {}
+  },
+  "rescore": [
+    {
+      "query": {
+        "rescore_query":{
+          "match_phrase":{
+            "body":{
+              "query": "Fox jumped"
+            }
+          }
+        },
+        "query_weight": 1.0,
+        "rescore_query_weight": 2.0
+      },
+      "window_size": 2
+    },
+    {
+      "query": {
+        "rescore_query":{
+          "function_score":{
+            "field_value_factor": {
+              "field": "price",
+              "missing": 1
+            }
+          }
+        },
+        "query_weight": 1.0,
+        "rescore_query_weight": 4.0
+      },
+      "window_size": 1
+    }
+  ]
+}
+```
+Notice in the output how `doc_a` and `doc_b` have scores ~27 and ~3.6 respectively.
+- Cascade went over 2 results, then 1: 
+  - Rank 1 (`doc_a`) boosted by both the phrase match AND the price boost
+  - Rank 2 (`doc_b`) boosted by phrase match "Fox jumped"
+  - Ranks 3 (`doc_c`) and 4 (`doc_d`) have original score of 1.0.
+```json
+{
+  "took": 17,
+  "timed_out": false,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": {
+      "value": 4,
+      "relation": "eq"
+    },
+    "max_score": 28.000904,
+    "hits": [
+      {
+        "_index": "searchml_test",
+        "_id": "doc_a",
+        "_score": 28.000904,
+        "_source": {
+          "id": "doc_a",
+          "title": "Fox and Hounds",
+          "body": "The quick red fox jumped over the lazy brown dogs.",
+          "price": "5.99",
+          "in_stock": "true",
+          "category": "childrens"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_b",
+        "_score": 3.5107706,
+        "_source": {
+          "id": "doc_b",
+          "title": "Fox wins championship",
+          "body": "Wearing all red, the Fox jumped out to a lead in the race over the Dog.",
+          "price": "15.13",
+          "in_stock": "true",
+          "category": "sports"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_c",
+        "_score": 1,
+        "_source": {
+          "id": "doc_c",
+          "title": "Lead Paint Removal",
+          "body": "All lead must be removed from the brown and red paint.",
+          "price": "150.21",
+          "in_stock": "false",
+          "category": "instructional"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_d",
+        "_score": 1,
+        "_source": {
+          "id": "doc_d",
+          "title": "The Three Little Pigs Revisted",
+          "price": "3.51",
+          "in_stock": "true",
+          "body": "The big, bad wolf huffed and puffed and blew the house down. The end.",
+          "category": "childrens"
+        }
+      }
+    ]
+  }
+}
+```
+
+## Altering Results
+- Manually specified results: include or exclude specific results for specific queries (ads, landing pages, requests from execs, etc.)
+- Pinned queries: have search engines handle these manually
+  - Often implmeented with search templates or upstream app-based logic layers or rules engines
+
+```bash
+POST searchml_test/_search
+{
+  "query": {
+    "bool": {
+      "must": {
+        "match_all": {}
+      },
+      "should": {
+        "constant_score": {
+          "filter": {
+            "term": {
+              "id": "doc_d"
+            }
+          },
+          "boost": 10000
+        }
+      }
+    }
+  },
+  "rescore": [
+    {
+      "query": {
+        "rescore_query":{
+          "match_phrase":{
+            "body":{
+              "query": "Fox jumped"
+            }
+          }
+        },
+        "query_weight": 1.0,
+        "rescore_query_weight": 2.0
+      },
+      "window_size": 2
+    },
+    {
+      "query": {
+        "rescore_query":{
+          "function_score":{
+            "field_value_factor": {
+              "field": "price",
+              "missing": 1
+            }
+          }
+        },
+        "query_weight": 1.0,
+        "rescore_query_weight": 4.0
+      },
+      "window_size": 1
+    }
+  ]
+}
+```
+The output is the following - notice `doc_d` has a huge boost advantage over the other items in the list:
+```json
+{
+  "took": 15,
+  "timed_out": false,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": {
+      "value": 4,
+      "relation": "eq"
+    },
+    "max_score": 10015.04,
+    "hits": [
+      {
+        "_index": "searchml_test",
+        "_id": "doc_d",
+        "_score": 10015.04,
+        "_source": {
+          "id": "doc_d",
+          "title": "The Three Little Pigs Revisted",
+          "price": "3.51",
+          "in_stock": "true",
+          "body": "The big, bad wolf huffed and puffed and blew the house down. The end.",
+          "category": "childrens"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_a",
+        "_score": 4.040904,
+        "_source": {
+          "id": "doc_a",
+          "title": "Fox and Hounds",
+          "body": "The quick red fox jumped over the lazy brown dogs.",
+          "price": "5.99",
+          "in_stock": "true",
+          "category": "childrens"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_b",
+        "_score": 1,
+        "_source": {
+          "id": "doc_b",
+          "title": "Fox wins championship",
+          "body": "Wearing all red, the Fox jumped out to a lead in the race over the Dog.",
+          "price": "15.13",
+          "in_stock": "true",
+          "category": "sports"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_c",
+        "_score": 1,
+        "_source": {
+          "id": "doc_c",
+          "title": "Lead Paint Removal",
+          "body": "All lead must be removed from the brown and red paint.",
+          "price": "150.21",
+          "in_stock": "false",
+          "category": "instructional"
+        }
+      }
+    ]
+  }
+}
+```
+
+### 🐞 Debugging: Boost not working
+
+When I ran the above query, I didn't get the results returned in the order I'd expect with `doc_d` at the top. It was the previous questions' order.
+
+To try and fix what I was seeing, I ran this as a way to learn how to boost:
+```bash
+POST /searchml_test/_search
+{
+  "query": {
+    "bool": {
+      "must": {
+        "match_all": {}
+      },
+      "should": {
+        "constant_score": {
+          "filter": {
+            "term": {
+              "id": "doc_d"
+            }
+          },
+          "boost": 10000
+        }
+      }
+    }
+  }
+}
+```
+
+The output was:
+```json
+{
+  "took": 4,
+  "timed_out": false,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": {
+      "value": 4,
+      "relation": "eq"
+    },
+    "max_score": 10001,
+    "hits": [
+      {
+        "_index": "searchml_test",
+        "_id": "doc_d",
+        "_score": 10001,
+        "_source": {
+          "id": "doc_d",
+          "title": "The Three Little Pigs Revisted",
+          "price": "3.51",
+          "in_stock": "true",
+          "body": "The big, bad wolf huffed and puffed and blew the house down. The end.",
+          "category": "childrens"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_a",
+        "_score": 1,
+        "_source": {
+          "id": "doc_a",
+          "title": "Fox and Hounds",
+          "body": "The quick red fox jumped over the lazy brown dogs.",
+          "price": "5.99",
+          "in_stock": "true",
+          "category": "childrens"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_b",
+        "_score": 1,
+        "_source": {
+          "id": "doc_b",
+          "title": "Fox wins championship",
+          "body": "Wearing all red, the Fox jumped out to a lead in the race over the Dog.",
+          "price": "15.13",
+          "in_stock": "true",
+          "category": "sports"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_c",
+        "_score": 1,
+        "_source": {
+          "id": "doc_c",
+          "title": "Lead Paint Removal",
+          "body": "All lead must be removed from the brown and red paint.",
+          "price": "150.21",
+          "in_stock": "false",
+          "category": "instructional"
+        }
+      }
+    ]
+  }
+}
+```
+
+Then I layered the rescoring in after the boost query as shown in the above example. See example above.
+This can also work:
+```bash
+POST searchml_test/_search
+{
+  "query": {
+    "bool": {
+      "should": [
+      {
+        "constant_score": {
+          "filter": {
+            "term": {
+              "id": "doc_d"
+            }
+          },
+          "boost": 10000
+        }
+      },
+      {"match_all": {}}
+      ]
+    }
+  },
+  "rescore": [
+    {
+      "query": {
+        "rescore_query":{
+          "match_phrase":{
+            "body":{
+              "query": "Fox jumped"
+            }
+          }
+        },
+        "query_weight": 1.0,
+        "rescore_query_weight": 2.0
+      },
+      "window_size": 2
+    },
+    {
+      "query": {
+        "rescore_query":{
+          "function_score":{
+            "field_value_factor": {
+              "field": "price",
+              "missing": 1
+            }
+          }
+        },
+        "query_weight": 1.0,
+        "rescore_query_weight": 4.0
+      },
+      "window_size": 1
+    }
+  ]
+}
+```
+
+## Reranking through Rules, Scripts and Custom Scoring
+- Script and Script Score query comes with a number of prebuild scoring options.
+  - Option for re-ranking results outside of the engine in app
+  - But, staying inside the engine optimizes access to the data as its procesed + saves you from having to take extra passes over it
+- Scripting slows down scoring and can get unwieldy to manage scripts
+
+### Rescore on price with a script only for `doc_a`
+```bash
+POST searchml_test/_search
+{
+  "query": {
+      "match_all": {}
+  },
+  "rescore": [
+    {
+      "query": {
+        "rescore_query":{
+          "function_score":{
+            "script_score": {
+              "script":{
+                "source": """
+                if (doc['id'].value == "doc_a"){
+                  return doc.price.value;
+                }
+                return 1;
+                """
+              }
+            }
+          }
+        },
+        "query_weight": 1.0,
+        "rescore_query_weight": 1.0
+      },
+      "window_size": 10
+    }
+  ]
+}
+```
+
+The output is below.
+- `doc_a` gets score of price (5.99) + 1 (due to match_all score) = 6.99
+- All other docs get a score of 1 (match_all score) + 1 (non `doc_a` case in script) = 2
+
+```json
+{
+  "took": 2,
+  "timed_out": false,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": {
+      "value": 4,
+      "relation": "eq"
+    },
+    "max_score": 6.99,
+    "hits": [
+      {
+        "_index": "searchml_test",
+        "_id": "doc_a",
+        "_score": 6.99,
+        "_source": {
+          "id": "doc_a",
+          "title": "Fox and Hounds",
+          "body": "The quick red fox jumped over the lazy brown dogs.",
+          "price": "5.99",
+          "in_stock": "true",
+          "category": "childrens"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_b",
+        "_score": 2,
+        "_source": {
+          "id": "doc_b",
+          "title": "Fox wins championship",
+          "body": "Wearing all red, the Fox jumped out to a lead in the race over the Dog.",
+          "price": "15.13",
+          "in_stock": "true",
+          "category": "sports"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_c",
+        "_score": 2,
+        "_source": {
+          "id": "doc_c",
+          "title": "Lead Paint Removal",
+          "body": "All lead must be removed from the brown and red paint.",
+          "price": "150.21",
+          "in_stock": "false",
+          "category": "instructional"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_d",
+        "_score": 2,
+        "_source": {
+          "id": "doc_d",
+          "title": "The Three Little Pigs Revisted",
+          "price": "3.51",
+          "in_stock": "true",
+          "body": "The big, bad wolf huffed and puffed and blew the house down. The end.",
+          "category": "childrens"
+        }
+      }
+    ]
+  }
+}
+```
+
+#### 🐞 Debugging: search_phrase_execution_exception // all shards failed
+
+In the above script, I originally had `id.keyword` as opposed to just `id`. This is because the `keyword` type is used directly without needing a `.keyword` suffix in the script. In my mapping, the id field is directly of type keyword. There's no sub-field; the field itself is the exact match keyword type. That's why I need to reference it with doc['id'].value.
+
+This caused the following error:
+```json
+{
+  "error": {
+    "root_cause": [
+      {
+        "type": "script_exception",
+        "reason": "runtime error",
+        "script_stack": [
+          "org.opensearch.search.lookup.LeafDocLookup.get(LeafDocLookup.java:87)",
+          "org.opensearch.search.lookup.LeafDocLookup.get(LeafDocLookup.java:55)",
+          "if (doc['id.keyword'].value == \"doc_a\"){\n                  ",
+          "        ^---- HERE"
+        ],
+        "script": " ...",
+        "lang": "painless",
+        "position": {
+          "offset": 25,
+          "start": 17,
+          "end": 76
+        }
+      }
+    ],
+    "type": "search_phase_execution_exception",
+    "reason": "all shards failed",
+    "phase": "query",
+    "grouped": true,
+    "failed_shards": [
+      {
+        "shard": 0,
+        "index": "searchml_test",
+        "node": "aTFYW_tGScGCPHJazjKLsQ",
+        "reason": {
+          "type": "script_exception",
+          "reason": "runtime error",
+          "script_stack": [
+            "org.opensearch.search.lookup.LeafDocLookup.get(LeafDocLookup.java:87)",
+            "org.opensearch.search.lookup.LeafDocLookup.get(LeafDocLookup.java:55)",
+            "if (doc['id.keyword'].value == \"doc_a\"){\n                  ",
+            "        ^---- HERE"
+          ],
+          "script": " ...",
+          "lang": "painless",
+          "position": {
+            "offset": 25,
+            "start": 17,
+            "end": 76
+          },
+          "caused_by": {
+            "type": "illegal_argument_exception",
+            "reason": "No field found for [id.keyword] in mapping"
+          }
+        }
+      }
+    ]
+  },
+  "status": 400
+}
+```
+
+A couple options to adjust the index mapping to include a keyword field for id:
+- Update the mapping (if no data is yet indexed or you can afford to reindex your data) or 
+- Reindex with a new mapping. After updating the mapping, must reindex data to ensure that the keyword subfield is populated for the existing documents. Here's an example of how to add a keyword field to an existing text field:
+```bash
+PUT searchml_test/_mapping
+{
+  "properties": {
+    "id": {
+      "type": "text",
+      "fields": {
+        "keyword": { 
+          "type": "keyword"
+        }
+      }
+    }
+    // include other field definitions here
+  }
+}
+```
+
+### Rescore on price with a Script Score query decay function 
+- Use an exponential decay function anchored at an origin (zero for cheap, 150 for expensive)
+- Use exponential decay as you get further out
+
+Boost low cost items:
+```bash
+# Boost low cost items:
+POST searchml_test/_search
+{
+  "query": {
+      "match_all": {}
+  },
+  "rescore": [
+    {
+      "query": {
+        "rescore_query":{
+          "function_score":{
+            "functions":[
+              {
+                  "exp": {
+                    "price":{ 
+                      "origin": "0",
+                    "scale": "4",
+                      "decay": "0.3"
+                    }
+                }
+              }
+              ]
+          }
+        },
+        "query_weight": 1.0,
+        "rescore_query_weight": 1.0
+      },
+      "window_size": 10
+    }
+  ]
+}
+```
+The output is below. Notice how the order goes from lowest price to highest price:
+- doc_d: 3.51
+- doc_a: 5.99
+- doc_b: 15.13
+- doc_c: 150.21
+
+```json
+{
+  "took": 2,
+  "timed_out": false,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": {
+      "value": 4,
+      "relation": "eq"
+    },
+    "max_score": 1.3476753,
+    "hits": [
+      {
+        "_index": "searchml_test",
+        "_id": "doc_d",
+        "_score": 1.3476753,
+        "_source": {
+          "id": "doc_d",
+          "title": "The Three Little Pigs Revisted",
+          "price": "3.51",
+          "in_stock": "true",
+          "body": "The big, bad wolf huffed and puffed and blew the house down. The end.",
+          "category": "childrens"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_a",
+        "_score": 1.1648121,
+        "_source": {
+          "id": "doc_a",
+          "title": "Fox and Hounds",
+          "body": "The quick red fox jumped over the lazy brown dogs.",
+          "price": "5.99",
+          "in_stock": "true",
+          "category": "childrens"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_b",
+        "_score": 1.0105247,
+        "_source": {
+          "id": "doc_b",
+          "title": "Fox wins championship",
+          "body": "Wearing all red, the Fox jumped out to a lead in the race over the Dog.",
+          "price": "15.13",
+          "in_stock": "true",
+          "category": "sports"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_c",
+        "_score": 1,
+        "_source": {
+          "id": "doc_c",
+          "title": "Lead Paint Removal",
+          "body": "All lead must be removed from the brown and red paint.",
+          "price": "150.21",
+          "in_stock": "false",
+          "category": "instructional"
+        }
+      }
+    ]
+  }
+}
+```
+
+Boost high cost items:
+```bash
+POST searchml_test/_search
+{
+  "query": {
+      "match_all": {}
+  },
+  "rescore": [
+    {
+      "query": {
+        "rescore_query":{
+          "function_score":{
+            "functions":[
+              {
+                  "exp": {
+                    "price":{ 
+                      "origin": "150",
+                    "scale": "40",
+                      "decay": "0.3"
+                    }
+                }
+              }
+              ]
+          }
+        },
+        "query_weight": 1.0,
+        "rescore_query_weight": 1.0
+      },
+      "window_size": 10
+    }
+  ]
+}
+```
+
+The output is below. Notice the order is in reverse:
+- doc_c: 150.21
+- doc_b: 15.13
+- doc_a: 5.99
+- doc_d: 3.51
+
+```json
+{
+  "took": 2,
+  "timed_out": false,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": {
+      "value": 4,
+      "relation": "eq"
+    },
+    "max_score": 1.9936988,
+    "hits": [
+      {
+        "_index": "searchml_test",
+        "_id": "doc_c",
+        "_score": 1.9936988,
+        "_source": {
+          "id": "doc_c",
+          "title": "Lead Paint Removal",
+          "body": "All lead must be removed from the brown and red paint.",
+          "price": "150.21",
+          "in_stock": "false",
+          "category": "instructional"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_b",
+        "_score": 1.0172577,
+        "_source": {
+          "id": "doc_b",
+          "title": "Fox wins championship",
+          "body": "Wearing all red, the Fox jumped out to a lead in the race over the Dog.",
+          "price": "15.13",
+          "in_stock": "true",
+          "category": "sports"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_a",
+        "_score": 1.0131071,
+        "_source": {
+          "id": "doc_a",
+          "title": "Fox and Hounds",
+          "body": "The quick red fox jumped over the lazy brown dogs.",
+          "price": "5.99",
+          "in_stock": "true",
+          "category": "childrens"
+        }
+      },
+      {
+        "_index": "searchml_test",
+        "_id": "doc_d",
+        "_score": 1.0121644,
+        "_source": {
+          "id": "doc_d",
+          "title": "The Three Little Pigs Revisted",
+          "price": "3.51",
+          "in_stock": "true",
+          "body": "The big, bad wolf huffed and puffed and blew the house down. The end.",
+          "category": "childrens"
+        }
+      }
+    ]
+  }
+}
+```
+
+## Learning to Rank
+- LTR is the application of machine learning to the ranking function in search
+  - Need judgments on documents and set of features we think contribute to the relevance of a document to a query
+- 3 ways to frame ranking as ML problem:
+  - The 2 most common:
+    - Pointwise model: predicts the score of each result
+    - Pairwise model: treats ranking as a series of binary classification problems to determine the order of each pair of results.
+  - 1 less common:
+    - Listwise model: simultaneously optimizes the entire sequence of results presented to the user.
+      - Most accurately reflects the goal of the search engine, its cost and complexity limit it's practical use
+- LTR on OpenSearch follows these steps:
+  1. Initialize LTR storage
+  2. Populate OS LTR feature store for application with feature set (contains one or more features, like sales rank or text of a field)
+  3. Collect judgments explicitly or implicitly (i.e. explicit judgments or implicit judgments based on query-click logs)
+  4. Join features with the judgements by "logging the feature stcores" to create a training data set - executing queries to retrieve defined features for each doc, gathering associated weights and writing out results
+  5. Train and test model
+  6. Deploy model to OpenSearch
+  7. Search with LTR in application 
+
+### Step 1: Initialize LTR Storage
+
+As referenced in `ltr_toy.py`, run this in an ipython client instance:
+```py
+import json
+import sys
+import tempfile
+from urllib.parse import urljoin
+
+import requests
+import xgboost as xgb
+from opensearchpy import OpenSearch
+import matplotlib.pyplot as plt
+from xgboost import XGBClassifier
+from xgboost import plot_tree
+
+#######################
+#
+# Setup work
+#
+#######################
+host = 'localhost'
+port = 9200
+base_url = "https://{}:{}/".format(host, port)
+auth = ('admin', 'admin')  # For testing only. Don't store credentials in code.
+
+# Create the client with SSL/TLS enabled, but hostname and certificate verification disabled.
+client = OpenSearch(
+    hosts=[{'host': host, 'port': port}],
+    http_compress=True,  # enables gzip compression for request bodies
+    http_auth=auth,
+    # client_cert = client_cert_path,
+    # client_key = client_key_path,
+    use_ssl=True,
+    verify_certs=False,
+    ssl_assert_hostname=False,
+    ssl_show_warn=False,
+)
+# Add our sample document to the index.
+docs = [
+    {
+        "id": "doc_a",
+        "title": "Fox and Hounds",
+        "body": "The quick red fox jumped over the lazy brown dogs.",
+        "price": "5.99",
+        "in_stock": True,
+        "category": "childrens"},
+    {
+        "id": "doc_b",
+        "title": "Fox wins championship",
+        "body": "Wearing all red, the Fox jumped out to a lead in the race over the Dog.",
+        "price": "15.13",
+        "in_stock": True,
+        "category": "sports"},
+    {
+        "id": "doc_c",
+        "title": "Lead Paint Removal",
+        "body": "All lead must be removed from the brown and red paint.",
+        "price": "150.21",
+        "in_stock": False,
+        "category": "instructional"},
+    {
+        "id": "doc_d",
+        "title": "The Three Little Pigs Revisited",
+        "price": "3.51",
+        "in_stock": True,
+        "body": "The big, bad wolf huffed and puffed and blew the house down. The end.",
+        "category": "childrens"},
+    {
+        "id": "doc_e",
+        "title": "Pigs in a Blanket and Other Recipes",
+        "price": "27.50",
+        "in_stock": True,
+        "body": "Pigs in a blanket aren't as cute as you would think given it's a food and not actual pigs wrapped in blankets.",
+        "category": "instructional"},
+    {
+        "id": "doc_f",
+        "title": "Dogs are the best",
+        "body": "Dogs beat cats every day of the week and twice on Sunday. A dog is always up for doing something.  Since there are so many dog breeds, there is a dog for everyone!",
+        "price": "50.99",
+        "in_stock": True,
+        "category": "childrens"},
+    {
+        "id": "doc_g",
+        "title": "Dog",
+        "body": "Dogs rule",
+        "price": "5.99",
+        "in_stock": True,
+        "category": "childrens"},
+    {
+        "id": "doc_h",
+        "title": "Dog: The bounty hunter: living in the red",
+        "body": "Dog is a bounty hunter who goes on pretend missions with his friends, one of whom is the Fox",
+        "price": "125.99",
+        "in_stock": True,
+        "category": "sports"},
+]
+
+# Create a new index
+index_name = 'searchml_ltr'
+index_body = {
+    'settings': {
+        'index': {
+            'query': {
+                'default_field': "body"
+            }
+        }
+    },
+    "mappings": {
+        "properties": {
+            "title": {"type": "text", "analyzer": "english"},
+            "body": {"type": "text", "analyzer": "english"},
+            "in_stock": {"type": "boolean"},
+            "category": {"type": "keyword", "ignore_above": "256"},
+            "price": {"type": "float"}
+        }
+    }
+}
+
+client.indices.delete(index_name, ignore_unavailable=True)
+client.indices.create(index_name, body=index_body)
+# Index our documents
+print("Indexing our documents")
+for doc in docs:
+    doc_id = doc["id"]
+    print("\tIndexing {}".format(doc_id))
+    client.index(
+        index=index_name,
+        body=doc,
+        id=doc_id,
+        refresh=True
+    )
+
+# Verify they are in:
+print("We indexed:\n{}".format(client.cat.count(index_name, params={"v": "true"})))
+
+#######################
+#
+# Step 1: Setup LTR storage
+#
+#######################
+
+# Turn on the LTR store and name it the same as our index
+ltr_store_name = index_name
+ltr_store_path = "_ltr/" + ltr_store_name
+
+print("Create our LTR store")
+# LTR requests are not supported by the OpenSearchPy client, so we will drop down to using Python's Requests library
+ltr_model_path = urljoin(base_url, ltr_store_path)
+# Delete any old storage
+resp = requests.delete(ltr_model_path, auth=auth, verify=False)
+print("\tDeleted old store response status: %s" % resp.status_code)
+# Create our new LTR storage
+resp = requests.put(ltr_model_path, auth=auth, verify=False)
+print("\tCreate the new store response status: %s" % resp.status_code)
+
+#######################
+#
+# Step 2: Setup LTR Featureset
+#
+#######################
+featureset_name = "ltr_toy"
+headers = {"Content-Type": 'application/json'}
+featureset_path = urljoin(ltr_model_path + "/", "_featureset/{}".format(featureset_name))
+# Upload our feature set to our model
+body_query_feature_name = "body_query"
+title_query_feature_name = "title_query"
+price_func_feature_name = "price_func"
+print("\tUpload our features to the LTR storage")
+ltr_feature_set = {"featureset": {
+    "features": [
+        {  # Instead of using our multifield query_string match, break it out into parts
+            "name": title_query_feature_name,
+            "params": ["keywords"],
+            "template_language": "mustache",
+            "template": {
+                "match": {
+                    "title": "{{keywords}}"
+                }
+            }
+        },
+        {  # Instead of using our multifield query_string match, break it out into parts
+            "name": body_query_feature_name,
+            "params": ["keywords"],
+            "template_language": "mustache",
+            "template": {
+                "match": {
+                    "body": "{{keywords}}"
+                }
+            }
+        },
+        # factor in price, albeit naively for this purpose, in practice we should normalize it, which we will do in the project!
+        {
+            "name": ("%s" % price_func_feature_name),
+            "template_language": "mustache",
+            "template": {
+                "function_score": {
+                    "functions": [{
+                        "field_value_factor": {
+                            "field": "price",
+                            "missing": 0
+                        }
+                    }],
+                    "query": {
+                        "match_all": {}
+                    }
+                }
+            }
+
+        }
+    ]
+}}
+resp = requests.post(featureset_path, headers=headers, data=json.dumps(ltr_feature_set), auth=auth, verify=False)
+
+#######################
+#
+# Step 3: Collect Judgments
+#
+#######################
+# Create a place to store our judgments
+class Judgment:
+
+    def __init__(self, query, doc_id, display_name, grade=0, features=[], query_str=None):
+        self.query = query
+        self.query_str = query_str
+        self.doc_id = doc_id
+        self.display_name = display_name
+        self.grade = grade
+        self.features = features
+
+    # Modified from https://github.com/o19s/elasticsearch-ltr-demo/blob/master/train/judgments.py
+    def toXGBFormat(self):
+        featuresAsStrs = ["%s:%s" % (idx + 1, feature.get('value', 0)) for idx, feature in enumerate(self.features)]
+        comment = "# %s\t%s" % (self.doc_id, self.query_str)
+        return "%s\tqid:%s\t%s %s" % (self.grade, self.query, "\t".join(featuresAsStrs), comment)
+
+
+# Create a map for tracking queries
+queries = {1: "dogs", 2: "red fox", 3: "wolf huffed AND puffed OR pig"}
+# A map where the key is the query id and the value is a list of judgments, one per document rated for that query
+judgments = {}
+
+# Loop over queries, execute a search
+for query in queries:
+    # Used to get the original queries to create the judgments
+    query_obj = {
+        'size': 5,
+        'query': {
+            'multi_match': {
+                'query': queries[query],
+                'fields': ['title^2', 'body']
+            }
+        }
+    }
+    print("################\nExecuting search: qid: {}; query: {}\n##########".format(query, queries[query]))
+    response = client.search(body=query_obj, index=index_name)
+    hits = response['hits']['hits']
+    if len(hits) > 0:
+        print(
+            "For each hit answer the question: 'Is this hit relevant(1) or not relevant(0) to the query: {}?':".format(
+                queries[query]))
+        judge_vals = judgments.get(query)
+        if judge_vals is None:
+            judge_vals = []
+            judgments[query] = judge_vals
+        for hit in hits:
+            print("Title: {}\n\nBody: {}\n".format(hit['_source']['title'], hit['_source']['body']))
+            print("Enter 0 or 1:")
+            input = ""
+            for input in sys.stdin.readline():
+                grade = input.rstrip()
+                if grade == "0" or grade == "1":
+                    judgment = Judgment(query, hit['_id'], hit['_source']['title'], int(grade))
+                    judge_vals.append(judgment)
+                    break
+                elif grade == "skip" or grade == "s":
+                    break
+                elif grade == "exit" or grade == 'e':
+                    input = grade  # set this back to the trimmed grade so we can exit the outer loop.  Very clunky!
+                    break
+            if input == "exit" or input == "e":
+                break  # break out of hits, this is ugly, but OK for what we are doing here
+
+#######################
+#
+# Step 4: Create Training Data (AKA Feature Logging)
+#
+#######################
+# Coming out of this loop, we should have an array of judgments
+train_file = tempfile.NamedTemporaryFile(delete=False)
+# Log our features by sending our query and it's judged documents to OpenSearch
+for (idx, item) in enumerate(judgments.items()):
+    judge_vals = item[1]
+    # create a new SLTR query with an appropriate filter query
+    doc_ids = []
+    for judgment in judge_vals:
+        # Note: we are executing one query per judgment doc id here because it's easier, but we could do this
+        # by adding all the doc ids for this query and scoring them all at once and cut our number of queries down
+        # significantly
+        # Create our SLTR query, filtering so we only retrieve the doc id in question
+        query_obj = {
+            'query': {
+                'bool': {
+                    "filter": [  # use a filter so that we don't actually score anything
+                        {
+                            "terms": {
+                                "_id": [judgment.doc_id]
+                            }
+                        },
+                        {  # use the LTR query bring in the LTR feature set
+                            "sltr": {
+                                "_name": "logged_featureset",
+                                "featureset": featureset_name,
+                                "store": ltr_store_name,
+                                "params": {
+                                    "keywords": queries[judgment.query]
+                                }
+                            }
+                        }
+                    ]
+                }
+            },
+            # Turn on feature logging so that we get weights back for our features
+            "ext": {
+                "ltr_log": {
+                    "log_specs": {
+                        "name": "log_entry",
+                        "named_query": "logged_featureset"
+                    }
+                }
+            }
+        }
+        # Run the query just like any other search
+        response = client.search(body=query_obj, index=index_name)
+        print(response)
+        # For each response, extract out the features and build our training features
+        # We are going to do this by iterating through the hits, which should be in doc_ids order and put the
+        # values back onto the Judgment object, which has a place to store these.
+        if response and len(response['hits']) > 0 and len(response['hits']['hits']) == 1:
+            hits = response['hits']['hits']
+            # there should only be one hit
+            judgment.features = hits[0]['fields']['_ltrlog'][0]['log_entry']
+            # 		<grade> qid:<query_id> <feature_number>:<weight>... # <doc_id> <comments>
+            # see https://xgboost.readthedocs.io/en/latest/tutorials/input_format.html
+            xgb_format = judgment.toXGBFormat() + "\n"
+            print(xgb_format)
+            train_file.write(bytes(xgb_format, 'utf-8'))
+        else:
+            print("Weirdness. Fix")
+
+train_file.close()
+
+#######################
+#
+# Step 5: Train and Test with XGBoost
+#
+#######################
+# Modified from https://github.com/o19s/elasticsearch-learning-to-rank/blob/main/demo/xgboost-demo/xgb.py
+# Read the LibSVM labels/features
+
+# We need to tell XGB what are features are called so that we can properly write out a model after training
+feat_map_file = tempfile.NamedTemporaryFile(delete=False)
+feat_map_file.write(bytes("0\tna\tq\n", "utf-8"))
+feat_map_file.write(bytes('1\t{}\tq\n'.format(title_query_feature_name), 'utf-8'))
+feat_map_file.write(bytes('2\t{}\tq\n'.format(body_query_feature_name), 'utf-8'))
+feat_map_file.write(bytes('3\t{}\tq\n'.format(price_func_feature_name), 'utf-8'))
+feat_map_file.close()
+dtrain = xgb.DMatrix(f'{train_file.name}?format=libsvm')
+param = {'max_depth': 5,  'silent': 1, 'objective': 'reg:linear'}
+num_round = 5
+print("Training XG Boost")
+bst = xgb.train(param, dtrain,
+                num_round)  # Do the training.  NOTE: in this toy example we did not use any hold out data
+model = bst.get_dump(fmap=feat_map_file.name, dump_format='json')
+
+# We need to escape entries for uploading to OpenSearch, per the docs
+model_str = '[' + ','.join(list(model)) + ']'
+
+# Create our metadata for uploading the model
+model_name = "ltr_toy_model"
+
+os_model = {
+    "model": {
+        "name": model_name,
+        "model": {
+            "type": "model/xgboost+json",
+            "definition": '{"objective":"reg:linear", "splits":' + model_str + '}'
+        }
+    }
+}
+#######################
+#
+# Step 6: Deploy your Model
+#
+#######################
+# Upload the model to OpenSearch
+model_path = urljoin(featureset_path + "/", "_createmodel")
+print("Uploading our model to %s" % model_path)
+response = requests.post(model_path, data=json.dumps(os_model), headers=headers, auth=auth, verify=False)
+print("\tResponse: %s" % response)
+
+#######################
+#
+# Step 7: Search with LTR
+#
+#######################
+# issue a search!
+print("Search with baseline")
+query_obj = {
+    'query': {
+        'multi_match': {
+            'query': queries[1],
+            'fields': ['title^2', 'body']
+        }
+    },
+}
+response = client.search(body=query_obj, index=index_name)
+print("Response:\n%s" % json.dumps(response, indent=True))
+print("Search with LTR")
+
+query_obj["rescore"] = {
+    "window_size": 10,
+    "query": {
+        "rescore_query": {
+            "sltr": {
+                "params": {
+                    "keywords": queries[1]
+                },
+                "model": model_name,
+                # Since we are using a named store, as opposed to simply '_ltr', we need to pass it in
+                "store": ltr_store_name,
+                "active_features": [title_query_feature_name, body_query_feature_name, price_func_feature_name]
+            }
+        },
+        "rescore_query_weight": "2" # Magic number, but let's say LTR matches are 2x baseline matches
+    }
+}
+response = client.search(body=query_obj, index=index_name)
+print("Response:\n%s" % json.dumps(response, indent=True))
+
+# Optional visualization of our tree
+model_plot = plot_tree(bst, feat_map_file.name)
+model_plot.figure.savefig("ltr_toy_model.png")
+# If you are running in an environment other than Gitpod that can display things, you can also uncomment the next line:
+# plt.show()
+```
+
+### Outputs with training
+- Provide judgements related to the dataset that are binary relevance judgements on some results
+This will give the output like this:
+```bash
+Indexing our documents
+        Indexing doc_a
+        Indexing doc_b
+        Indexing doc_c
+        Indexing doc_d
+        Indexing doc_e
+        Indexing doc_f
+        Indexing doc_g
+        Indexing doc_h
+We indexed:
+epoch      timestamp count
+1699239544 02:59:04  8
+
+Create our LTR store
+        Deleted old store response status: 200
+        Create the new store response status: 200
+        Upload our features to the LTR storage
+################
+Executing search: qid: 1; query: dogs
+##########
+For each hit answer the question: 'Is this hit relevant(1) or not relevant(0) to the query: dogs?':
+Title: Dog
+
+Body: Dogs rule
+
+Enter 0 or 1:
+1
+Title: Dogs are the best
+
+Body: Dogs beat cats every day of the week and twice on Sunday. A dog is always up for doing something.  Since there are so many dog breeds, there is a dog for everyone!
+
+Enter 0 or 1:
+1
+Title: Dog: The bounty hunter: living in the red
+
+Body: Dog is a bounty hunter who goes on pretend missions with his friends, one of whom is the Fox
+
+Enter 0 or 1:
+0
+Title: Fox and Hounds
+
+Body: The quick red fox jumped over the lazy brown dogs.
+
+Enter 0 or 1:
+1
+Title: Fox wins championship
+
+Body: Wearing all red, the Fox jumped out to a lead in the race over the Dog.
+
+Enter 0 or 1:
+0
+################
+Executing search: qid: 2; query: red fox
+##########
+For each hit answer the question: 'Is this hit relevant(1) or not relevant(0) to the query: red fox?':
+Title: Fox and Hounds
+
+Body: The quick red fox jumped over the lazy brown dogs.
+
+Enter 0 or 1:
+1
+Title: Dog: The bounty hunter: living in the red
+
+Body: Dog is a bounty hunter who goes on pretend missions with his friends, one of whom is the Fox
+
+Enter 0 or 1:
+0
+Title: Fox wins championship
+
+Body: Wearing all red, the Fox jumped out to a lead in the race over the Dog.
+
+Enter 0 or 1:
+0
+Title: Lead Paint Removal
+
+Body: All lead must be removed from the brown and red paint.
+
+Enter 0 or 1:
+0
+################
+Executing search: qid: 3; query: wolf huffed AND puffed OR pig
+##########
+For each hit answer the question: 'Is this hit relevant(1) or not relevant(0) to the query: wolf huffed AND puffed OR pig?':
+Title: The Three Little Pigs Revisited
+
+Body: The big, bad wolf huffed and puffed and blew the house down. The end.
+
+Enter 0 or 1:
+1
+Title: Pigs in a Blanket and Other Recipes
+
+Body: Pigs in a blanket aren't as cute as you would think given it's a food and not actual pigs wrapped in blankets.
+
+Enter 0 or 1:
+0
+{'took': 4, 'timed_out': False, '_shards': {'total': 1, 'successful': 1, 'skipped': 0, 'failed': 0}, 'hits': {'total': {'value': 1, 'relation': 'eq'}, 'max_score': 0.0, 'hits': [{'_index': 'searchml_ltr', '_id': 'doc_g', '_score': 0.0, '_source': {'id': 'doc_g', 'title': 'Dog', 'body': 'Dogs rule', 'price': '5.99', 'in_stock': True, 'category': 'childrens'}, 'fields': {'_ltrlog': [{'log_entry': [{'name': 'title_query', 'value': 1.2986346}, {'name': 'body_query', 'value': 0.7342377}, {'name': 'price_func', 'value': 5.99}]}]}, 'matched_queries': ['logged_featureset']}]}}
+1       qid:1   1:1.2986346     2:0.7342377     3:5.99 # doc_g  None
+
+{'took': 2, 'timed_out': False, '_shards': {'total': 1, 'successful': 1, 'skipped': 0, 'failed': 0}, 'hits': {'total': {'value': 1, 'relation': 'eq'}, 'max_score': 0.0, 'hits': [{'_index': 'searchml_ltr', '_id': 'doc_f', '_score': 0.0, '_source': {'id': 'doc_f', 'title': 'Dogs are the best', 'body': 'Dogs beat cats every day of the week and twice on Sunday. A dog is always up for doing something.  Since there are so many dog breeds, there is a dog for everyone!', 'price': '50.99', 'in_stock': True, 'category': 'childrens'}, 'fields': {'_ltrlog': [{'log_entry': [{'name': 'title_query', 'value': 1.0935872}, {'name': 'body_query', 'value': 0.7156082}, {'name': 'price_func', 'value': 50.99}]}]}, 'matched_queries': ['logged_featureset']}]}}
+1       qid:1   1:1.0935872     2:0.7156082     3:50.99 # doc_f None
+
+{'took': 2, 'timed_out': False, '_shards': {'total': 1, 'successful': 1, 'skipped': 0, 'failed': 0}, 'hits': {'total': {'value': 1, 'relation': 'eq'}, 'max_score': 0.0, 'hits': [{'_index': 'searchml_ltr', '_id': 'doc_h', '_score': 0.0, '_source': {'id': 'doc_h', 'title': 'Dog: The bounty hunter: living in the red', 'body': 'Dog is a bounty hunter who goes on pretend missions with his friends, one of whom is the Fox', 'price': '125.99', 'in_stock': True, 'category': 'sports'}, 'fields': {'_ltrlog': [{'log_entry': [{'name': 'title_query', 'value': 0.742077}, {'name': 'body_query', 'value': 0.46032518}, {'name': 'price_func', 'value': 125.99}]}]}, 'matched_queries': ['logged_featureset']}]}}
+0       qid:1   1:0.742077      2:0.46032518    3:125.99 # doc_h        None
+
+{'took': 2, 'timed_out': False, '_shards': {'total': 1, 'successful': 1, 'skipped': 0, 'failed': 0}, 'hits': {'total': {'value': 1, 'relation': 'eq'}, 'max_score': 0.0, 'hits': [{'_index': 'searchml_ltr', '_id': 'doc_a', '_score': 0.0, '_source': {'id': 'doc_a', 'title': 'Fox and Hounds', 'body': 'The quick red fox jumped over the lazy brown dogs.', 'price': '5.99', 'in_stock': True, 'category': 'childrens'}, 'fields': {'_ltrlog': [{'log_entry': [{'name': 'title_query'}, {'name': 'body_query', 'value': 0.5410643}, {'name': 'price_func', 'value': 5.99}]}]}, 'matched_queries': ['logged_featureset']}]}}
+1       qid:1   1:0     2:0.5410643     3:5.99 # doc_a  None
+
+{'took': 2, 'timed_out': False, '_shards': {'total': 1, 'successful': 1, 'skipped': 0, 'failed': 0}, 'hits': {'total': {'value': 1, 'relation': 'eq'}, 'max_score': 0.0, 'hits': [{'_index': 'searchml_ltr', '_id': 'doc_b', '_score': 0.0, '_source': {'id': 'doc_b', 'title': 'Fox wins championship', 'body': 'Wearing all red, the Fox jumped out to a lead in the race over the Dog.', 'price': '15.13', 'in_stock': True, 'category': 'sports'}, 'fields': {'_ltrlog': [{'log_entry': [{'name': 'title_query'}, {'name': 'body_query', 'value': 0.49743986}, {'name': 'price_func', 'value': 15.13}]}]}, 'matched_queries': ['logged_featureset']}]}}
+0       qid:1   1:0     2:0.49743986    3:15.13 # doc_b None
+
+{'took': 2, 'timed_out': False, '_shards': {'total': 1, 'successful': 1, 'skipped': 0, 'failed': 0}, 'hits': {'total': {'value': 1, 'relation': 'eq'}, 'max_score': 0.0, 'hits': [{'_index': 'searchml_ltr', '_id': 'doc_a', '_score': 0.0, '_source': {'id': 'doc_a', 'title': 'Fox and Hounds', 'body': 'The quick red fox jumped over the lazy brown dogs.', 'price': '5.99', 'in_stock': True, 'category': 'childrens'}, 'fields': {'_ltrlog': [{'log_entry': [{'name': 'title_query', 'value': 1.4831866}, {'name': 'body_query', 'value': 2.0752847}, {'name': 'price_func', 'value': 5.99}]}]}, 'matched_queries': ['logged_featureset']}]}}
+1       qid:2   1:1.4831866     2:2.0752847     3:5.99 # doc_a  None
+
+{'took': 2, 'timed_out': False, '_shards': {'total': 1, 'successful': 1, 'skipped': 0, 'failed': 0}, 'hits': {'total': {'value': 1, 'relation': 'eq'}, 'max_score': 0.0, 'hits': [{'_index': 'searchml_ltr', '_id': 'doc_h', '_score': 0.0, '_source': {'id': 'doc_h', 'title': 'Dog: The bounty hunter: living in the red', 'body': 'Dog is a bounty hunter who goes on pretend missions with his friends, one of whom is the Fox', 'price': '125.99', 'in_stock': True, 'category': 'sports'}, 'fields': {'_ltrlog': [{'log_entry': [{'name': 'title_query', 'value': 1.4078112}, {'name': 'body_query', 'value': 0.8828025}, {'name': 'price_func', 'value': 125.99}]}]}, 'matched_queries': ['logged_featureset']}]}}
+0       qid:2   1:1.4078112     2:0.8828025     3:125.99 # doc_h        None
+
+{'took': 2, 'timed_out': False, '_shards': {'total': 1, 'successful': 1, 'skipped': 0, 'failed': 0}, 'hits': {'total': {'value': 1, 'relation': 'eq'}, 'max_score': 0.0, 'hits': [{'_index': 'searchml_ltr', '_id': 'doc_b', '_score': 0.0, '_source': {'id': 'doc_b', 'title': 'Fox wins championship', 'body': 'Wearing all red, the Fox jumped out to a lead in the race over the Dog.', 'price': '15.13', 'in_stock': True, 'category': 'sports'}, 'fields': {'_ltrlog': [{'log_entry': [{'name': 'title_query', 'value': 1.2809337}, {'name': 'body_query', 'value': 1.9079604}, {'name': 'price_func', 'value': 15.13}]}]}, 'matched_queries': ['logged_featureset']}]}}
+0       qid:2   1:1.2809337     2:1.9079604     3:15.13 # doc_b None
+
+{'took': 3, 'timed_out': False, '_shards': {'total': 1, 'successful': 1, 'skipped': 0, 'failed': 0}, 'hits': {'total': {'value': 1, 'relation': 'eq'}, 'max_score': 0.0, 'hits': [{'_index': 'searchml_ltr', '_id': 'doc_c', '_score': 0.0, '_source': {'id': 'doc_c', 'title': 'Lead Paint Removal', 'body': 'All lead must be removed from the brown and red paint.', 'price': '150.21', 'in_stock': False, 'category': 'instructional'}, 'fields': {'_ltrlog': [{'log_entry': [{'name': 'title_query'}, {'name': 'body_query', 'value': 1.0376424}, {'name': 'price_func', 'value': 150.21}]}]}, 'matched_queries': ['logged_featureset']}]}}
+0       qid:2   1:0     2:1.0376424     3:150.21 # doc_c        None
+
+{'took': 2, 'timed_out': False, '_shards': {'total': 1, 'successful': 1, 'skipped': 0, 'failed': 0}, 'hits': {'total': {'value': 1, 'relation': 'eq'}, 'max_score': 0.0, 'hits': [{'_index': 'searchml_ltr', '_id': 'doc_d', '_score': 0.0, '_source': {'id': 'doc_d', 'title': 'The Three Little Pigs Revisited', 'price': '3.51', 'in_stock': True, 'body': 'The big, bad wolf huffed and puffed and blew the house down. The end.', 'category': 'childrens'}, 'fields': {'_ltrlog': [{'log_entry': [{'name': 'title_query', 'value': 1.1272218}, {'name': 'body_query', 'value': 5.657528}, {'name': 'price_func', 'value': 3.51}]}]}, 'matched_queries': ['logged_featureset']}]}}
+1       qid:3   1:1.1272218     2:5.657528      3:3.51 # doc_d  None
+
+{'took': 2, 'timed_out': False, '_shards': {'total': 1, 'successful': 1, 'skipped': 0, 'failed': 0}, 'hits': {'total': {'value': 1, 'relation': 'eq'}, 'max_score': 0.0, 'hits': [{'_index': 'searchml_ltr', '_id': 'doc_e', '_score': 0.0, '_source': {'id': 'doc_e', 'title': 'Pigs in a Blanket and Other Recipes', 'price': '27.50', 'in_stock': True, 'body': "Pigs in a blanket aren't as cute as you would think given it's a food and not actual pigs wrapped in blankets.", 'category': 'instructional'}, 'fields': {'_ltrlog': [{'log_entry': [{'name': 'title_query', 'value': 1.1272218}, {'name': 'body_query', 'value': 2.2908108}, {'name': 'price_func', 'value': 27.5}]}]}, 'matched_queries': ['logged_featureset']}]}}
+0       qid:3   1:1.1272218     2:2.2908108     3:27.5 # doc_e  None
+
+Training XG Boost
+/home/gitpod/.pyenv/versions/3.9.7/envs/search_with_ml/lib/python3.9/site-packages/xgboost/core.py:160: UserWarning: [02:16:53] WARNING: /workspace/src/objective/regression_obj.cu:209: reg:linear is now deprecated in favor of reg:squarederror.
+  warnings.warn(smsg, UserWarning)
+/home/gitpod/.pyenv/versions/3.9.7/envs/search_with_ml/lib/python3.9/site-packages/xgboost/core.py:160: UserWarning: [02:16:53] WARNING: /workspace/src/learner.cc:742: 
+Parameters: { "silent" } are not used.
+
+  warnings.warn(smsg, UserWarning)
+Uploading our model to https://localhost:9200/_ltr/searchml_ltr/_featureset/ltr_toy/_createmodel
+        Response: <Response [201]>
+Search with baseline
+Response:
+{
+ "took": 2,
+ "timed_out": false,
+ "_shards": {
+  "total": 1,
+  "successful": 1,
+  "skipped": 0,
+  "failed": 0
+ },
+ "hits": {
+  "total": {
+   "value": 5,
+   "relation": "eq"
+  },
+  "max_score": 2.5972693,
+  "hits": [
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_g",
+    "_score": 2.5972693,
+    "_source": {
+     "id": "doc_g",
+     "title": "Dog",
+     "body": "Dogs rule",
+     "price": "5.99",
+     "in_stock": true,
+     "category": "childrens"
+    }
+   },
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_f",
+    "_score": 2.1871743,
+    "_source": {
+     "id": "doc_f",
+     "title": "Dogs are the best",
+     "body": "Dogs beat cats every day of the week and twice on Sunday. A dog is always up for doing something.  Since there are so many dog breeds, there is a dog for everyone!",
+     "price": "50.99",
+     "in_stock": true,
+     "category": "childrens"
+    }
+   },
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_h",
+    "_score": 1.484154,
+    "_source": {
+     "id": "doc_h",
+     "title": "Dog: The bounty hunter: living in the red",
+     "body": "Dog is a bounty hunter who goes on pretend missions with his friends, one of whom is the Fox",
+     "price": "125.99",
+     "in_stock": true,
+     "category": "sports"
+    }
+   },
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_a",
+    "_score": 0.5410643,
+    "_source": {
+     "id": "doc_a",
+     "title": "Fox and Hounds",
+     "body": "The quick red fox jumped over the lazy brown dogs.",
+     "price": "5.99",
+     "in_stock": true,
+     "category": "childrens"
+    }
+   },
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_b",
+    "_score": 0.49743986,
+    "_source": {
+     "id": "doc_b",
+     "title": "Fox wins championship",
+     "body": "Wearing all red, the Fox jumped out to a lead in the race over the Dog.",
+     "price": "15.13",
+     "in_stock": true,
+     "category": "sports"
+    }
+   }
+  ]
+ }
+}
+Search with LTR
+Response:
+{
+ "took": 7,
+ "timed_out": false,
+ "_shards": {
+  "total": 1,
+  "successful": 1,
+  "skipped": 0,
+  "failed": 0
+ },
+ "hits": {
+  "total": {
+   "value": 5,
+   "relation": "eq"
+  },
+  "max_score": 3.1707134,
+  "hits": [
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_g",
+    "_score": 3.1707134,
+    "_source": {
+     "id": "doc_g",
+     "title": "Dog",
+     "body": "Dogs rule",
+     "price": "5.99",
+     "in_stock": true,
+     "category": "childrens"
+    }
+   },
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_f",
+    "_score": 2.7606187,
+    "_source": {
+     "id": "doc_f",
+     "title": "Dogs are the best",
+     "body": "Dogs beat cats every day of the week and twice on Sunday. A dog is always up for doing something.  Since there are so many dog breeds, there is a dog for everyone!",
+     "price": "50.99",
+     "in_stock": true,
+     "category": "childrens"
+    }
+   },
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_h",
+    "_score": 1.9471023,
+    "_source": {
+     "id": "doc_h",
+     "title": "Dog: The bounty hunter: living in the red",
+     "body": "Dog is a bounty hunter who goes on pretend missions with his friends, one of whom is the Fox",
+     "price": "125.99",
+     "in_stock": true,
+     "category": "sports"
+    }
+   },
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_a",
+    "_score": -0.3758319,
+    "_source": {
+     "id": "doc_a",
+     "title": "Fox and Hounds",
+     "body": "The quick red fox jumped over the lazy brown dogs.",
+     "price": "5.99",
+     "in_stock": true,
+     "category": "childrens"
+    }
+   },
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_b",
+    "_score": -0.41945636,
+    "_source": {
+     "id": "doc_b",
+     "title": "Fox wins championship",
+     "body": "Wearing all red, the Fox jumped out to a lead in the race over the Dog.",
+     "price": "15.13",
+     "in_stock": true,
+     "category": "sports"
+    }
+   }
+  ]
+ }
+}
+
+```
+
+This output creates an image of our judgments run, which looks like this: 
+![](./assets/ltr_toy_model.png)
+
+
+### Testing if the SLTR query works:
+
+#### SEARCH WITH BASELINE
+```py
+print("Search with baseline")
+query_obj = {
+    'query': {
+        'multi_match': {
+            'query': queries[1],
+            'fields': ['title^2', 'body']
+        }
+    },
+}
+response = client.search(body=query_obj, index=index_name)
+print("Response:\n%s" % json.dumps(response, indent=True))
+```
+
+Results are:
+```json
+Search with baseline
+Response:
+{
+ "took": 2,
+ "timed_out": false,
+ "_shards": {
+  "total": 1,
+  "successful": 1,
+  "skipped": 0,
+  "failed": 0
+ },
+ "hits": {
+  "total": {
+   "value": 5,
+   "relation": "eq"
+  },
+  "max_score": 2.5972693,
+  "hits": [
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_g",
+    "_score": 2.5972693,
+    "_source": {
+     "id": "doc_g",
+     "title": "Dog",
+     "body": "Dogs rule",
+     "price": "5.99",
+     "in_stock": true,
+     "category": "childrens"
+    }
+   },
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_f",
+    "_score": 2.1871743,
+    "_source": {
+     "id": "doc_f",
+     "title": "Dogs are the best",
+     "body": "Dogs beat cats every day of the week and twice on Sunday. A dog is always up for doing something.  Since there are so many dog breeds, there is a dog for everyone!",
+     "price": "50.99",
+     "in_stock": true,
+     "category": "childrens"
+    }
+   },
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_h",
+    "_score": 1.484154,
+    "_source": {
+     "id": "doc_h",
+     "title": "Dog: The bounty hunter: living in the red",
+     "body": "Dog is a bounty hunter who goes on pretend missions with his friends, one of whom is the Fox",
+     "price": "125.99",
+     "in_stock": true,
+     "category": "sports"
+    }
+   },
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_a",
+    "_score": 0.5410643,
+    "_source": {
+     "id": "doc_a",
+     "title": "Fox and Hounds",
+     "body": "The quick red fox jumped over the lazy brown dogs.",
+     "price": "5.99",
+     "in_stock": true,
+     "category": "childrens"
+    }
+   },
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_b",
+    "_score": 0.49743986,
+    "_source": {
+     "id": "doc_b",
+     "title": "Fox wins championship",
+     "body": "Wearing all red, the Fox jumped out to a lead in the race over the Dog.",
+     "price": "15.13",
+     "in_stock": true,
+     "category": "sports"
+    }
+   }
+  ]
+ }
+}
+```
+
+#### SEARCH WITH LTR
+```py
+print("Search with LTR")
+
+query_obj["rescore"] = {
+    "window_size": 10,
+    "query": {
+        "rescore_query": {
+            "sltr": {
+                "params": {
+                    "keywords": queries[1]
+                },
+                "model": model_name,
+                "store": ltr_store_name,
+                # Since we are using a named store, as opposed to simply '_ltr', we need to pass it in
+                "active_features": [title_query_feature_name, body_query_feature_name, price_func_feature_name]
+            }
+        },
+        "rescore_query_weight": "2" # Magic number, but let's say LTR matches are 2x baseline matches
+    }
+}
+response = client.search(body=query_obj, index=index_name)
+print("Response:\n%s" % json.dumps(response, indent=True))
+```
+
+Results are:
+```json
+Search with LTR
+Response:
+{
+ "took": 5,
+ "timed_out": false,
+ "_shards": {
+  "total": 1,
+  "successful": 1,
+  "skipped": 0,
+  "failed": 0
+ },
+ "hits": {
+  "total": {
+   "value": 5,
+   "relation": "eq"
+  },
+  "max_score": 3.4115756,
+  "hits": [
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_g",
+    "_score": 3.4115756,
+    "_source": {
+     "id": "doc_g",
+     "title": "Dog",
+     "body": "Dogs rule",
+     "price": "5.99",
+     "in_stock": true,
+     "category": "childrens"
+    }
+   },
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_f",
+    "_score": 2.7940412,
+    "_source": {
+     "id": "doc_f",
+     "title": "Dogs are the best",
+     "body": "Dogs beat cats every day of the week and twice on Sunday. A dog is always up for doing something.  Since there are so many dog breeds, there is a dog for everyone!",
+     "price": "50.99",
+     "in_stock": true,
+     "category": "childrens"
+    }
+   },
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_a",
+    "_score": 1.3553706,
+    "_source": {
+     "id": "doc_a",
+     "title": "Fox and Hounds",
+     "body": "The quick red fox jumped over the lazy brown dogs.",
+     "price": "5.99",
+     "in_stock": true,
+     "category": "childrens"
+    }
+   },
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_h",
+    "_score": 0.87295395,
+    "_source": {
+     "id": "doc_h",
+     "title": "Dog: The bounty hunter: living in the red",
+     "body": "Dog is a bounty hunter who goes on pretend missions with his friends, one of whom is the Fox",
+     "price": "125.99",
+     "in_stock": true,
+     "category": "sports"
+    }
+   },
+   {
+    "_index": "searchml_ltr",
+    "_id": "doc_b",
+    "_score": -0.11376017,
+    "_source": {
+     "id": "doc_b",
+     "title": "Fox wins championship",
+     "body": "Wearing all red, the Fox jumped out to a lead in the race over the Dog.",
+     "price": "15.13",
+     "in_stock": true,
+     "category": "sports"
+    }
+   }
+  ]
+ }
+}
+```
+
+### Conclusion of Baseline vs. LTR
+Two things happened in our complete end-to-end lifecycle of learning to rank (LTR):
+- Scores changed because of the boosting effect across all docs from the additional LTR factors
+- `doc_a` and `doc_h` swapped places because of the LTR match
+
+## Overview of LTR
+
+Used a Learning to Rank (LTR) model to reorder search results from an Elasticsearch instance based on a trained machine learning model that has learned which documents should be ranked higher for certain queries.
+
+1. Baseline Search: First, a regular search is performed using a multi_match query that searches across specified fields (title and body in this case). This is considered the baseline because it does not use the LTR model. The multi_match query is a standard Elasticsearch query that matches the provided query (in this case, queries[1], which should be a string that represents the user's search terms) against the title and body fields of documents in the index, with the title being given twice the weight of the body.
+
+2. LTR-Enhanced Search: Next, a search is performed that includes a "rescore" phase using the trained LTR model. The rescore phase reorders the search hits returned by the primary query based on additional criteria - in this case, the scores from the LTR model. The sltr parameter tells Elasticsearch to apply the trained LTR model named model_name, which is stored in ltr_store_name. This model takes the keywords (the same queries[1]) as parameters and applies the features title_query_feature_name, body_query_feature_name, and price_func_feature_name to score the documents.
+
+3. Understanding the Query: The query object you see being constructed is essentially an instruction set for Elasticsearch on how to conduct the search. The first part without the rescore is a standard search. The rescore part injects the LTR model into the search process to reorder the documents according to the model's predictions.
+
+4. Results Comparison: The two responses are then printed. The "baseline" response shows the results without LTR, and the "LTR" response shows the results after the documents have been rescored with the LTR model.
+
+5. Observing Changes: When comparing the results, you are supposed to see the effects of the LTR model. Typically, this might mean different scoring and potentially a different ordering of documents. In the example provided, doc_a and doc_h swapped positions, indicating that the LTR model saw doc_a as more relevant to the query than doc_h, contrary to the baseline search without the LTR model.
+
+The "query" is looking for documents that match the search terms in queries[1], and the LTR model is applied to rerank those documents according to what it has learned during training (which documents are most relevant for such queries).
+
+If the a and h documents didn't switch, it could be because of the judgments made when training the model (how relevance of documents was ranked in the training data). These judgments would affect how the model learns to score and rank documents.
+
+The learning process in an LTR system involves training a model on a set of features extracted from queries and documents, as well as judgments (often human-made) on the relevance of these documents to these queries. The system then learns to predict the relevance of new, unseen documents to new queries. The goal is to order the search results so that the more relevant documents (according to the model) come first.
+
+
+# Debugging Relevance
+
+## How was a query parsed?
+See how a query was parsed with the validate endpoint of `explain=true`
+
+### Simple:
+```bash
+GET /searchml_test/_validate/query?explain=true
+{
+  "query": {
+      "term":{
+        "title": "dog"
+      }
+  }
+}
+```
+
+Output is:
+```json
+{
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "failed": 0
+  },
+  "valid": true,
+  "explanations": [
+    {
+      "index": "searchml_test",
+      "valid": true,
+      "explanation": "title:dog"
+    }
+  ]
+}
+```
+
+### Complex:
+```bash
+GET /searchml_test/_validate/query?explain=true
+{
+  "query": {
+      "bool":{
+        "must":[
+            {"query_string": {
+                "query": "dogs OR cats OR \"bad wolf\" (house or puffed)"
+            }}
+        ]
+
+      }
+  }
+}
+```
+
+Output is:
+```json
+{
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "failed": 0
+  },
+  "valid": true,
+  "explanations": [
+    {
+      "index": "searchml_test",
+      "valid": true,
+      "explanation": """+((category:dogs | MatchNoDocsQuery("failed [price] query, caused by number_format_exception:[For input string: "dogs"]") | MatchNoDocsQuery("failed [price] query, caused by number_format_exception:[For input string: "dogs"]") | title:dogs | body:dogs | id:dogs) (category:cats | MatchNoDocsQuery("failed [price] query, caused by number_format_exception:[For input string: "cats"]") | MatchNoDocsQuery("failed [price] query, caused by number_format_exception:[For input string: "cats"]") | id:cats | body:cats | title:cats) (body:"bad wolf" | MatchNoDocsQuery("failed [price] query, caused by number_format_exception:[For input string: "bad wolf"]") | MatchNoDocsQuery("failed [price] query, caused by number_format_exception:[For input string: "bad wolf"]") | title:"bad wolf" | id:bad wolf | category:bad wolf) (category:house or puffed | MatchNoDocsQuery("failed [price] query, caused by number_format_exception:[For input string: "house or puffed"]") | MatchNoDocsQuery("failed [price] query, caused by number_format_exception:[For input string: "house or puffed"]") | id:house or puffed | (title:house title:or title:puffed) | (body:house body:or body:puffed)))"""
+    }
+  ]
+}
+```
+
+## How was a document analyzed?
+- There could be a possible mismatch in text analyzers, so it's important tha tthe analyzers used for indexing and query processing be aligned. 
+- OS provides `_analyze` API to see results of text analysis
+
+### Analyze two sentences and output detailed explanations
+```bash
+# Analyze two sentences and output detailed explanations
+GET /_analyze
+{
+  "analyzer": "english",
+  "explain": "true",
+  "text": ["Wearing all red, the Fox jumped out to a lead in the race over the Dog.", "All lead must be removed from the brown and red paint."]
+}
+```
+Output is:
+```json
+{
+  "detail": {
+    "custom_analyzer": false,
+    "analyzer": {
+      "name": "english",
+      "tokens": [
+        {
+          "token": "wear",
+          "start_offset": 0,
+          "end_offset": 7,
+          "type": "<ALPHANUM>",
+          "position": 0,
+          "bytes": "[77 65 61 72]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "all",
+          "start_offset": 8,
+          "end_offset": 11,
+          "type": "<ALPHANUM>",
+          "position": 1,
+          "bytes": "[61 6c 6c]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "red",
+          "start_offset": 12,
+          "end_offset": 15,
+          "type": "<ALPHANUM>",
+          "position": 2,
+          "bytes": "[72 65 64]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "fox",
+          "start_offset": 21,
+          "end_offset": 24,
+          "type": "<ALPHANUM>",
+          "position": 4,
+          "bytes": "[66 6f 78]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "jump",
+          "start_offset": 25,
+          "end_offset": 31,
+          "type": "<ALPHANUM>",
+          "position": 5,
+          "bytes": "[6a 75 6d 70]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "out",
+          "start_offset": 32,
+          "end_offset": 35,
+          "type": "<ALPHANUM>",
+          "position": 6,
+          "bytes": "[6f 75 74]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "lead",
+          "start_offset": 41,
+          "end_offset": 45,
+          "type": "<ALPHANUM>",
+          "position": 9,
+          "bytes": "[6c 65 61 64]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "race",
+          "start_offset": 53,
+          "end_offset": 57,
+          "type": "<ALPHANUM>",
+          "position": 12,
+          "bytes": "[72 61 63 65]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "over",
+          "start_offset": 58,
+          "end_offset": 62,
+          "type": "<ALPHANUM>",
+          "position": 13,
+          "bytes": "[6f 76 65 72]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "dog",
+          "start_offset": 67,
+          "end_offset": 70,
+          "type": "<ALPHANUM>",
+          "position": 15,
+          "bytes": "[64 6f 67]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "all",
+          "start_offset": 72,
+          "end_offset": 75,
+          "type": "<ALPHANUM>",
+          "position": 16,
+          "bytes": "[61 6c 6c]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "lead",
+          "start_offset": 76,
+          "end_offset": 80,
+          "type": "<ALPHANUM>",
+          "position": 17,
+          "bytes": "[6c 65 61 64]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "must",
+          "start_offset": 81,
+          "end_offset": 85,
+          "type": "<ALPHANUM>",
+          "position": 18,
+          "bytes": "[6d 75 73 74]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "remov",
+          "start_offset": 89,
+          "end_offset": 96,
+          "type": "<ALPHANUM>",
+          "position": 20,
+          "bytes": "[72 65 6d 6f 76]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "from",
+          "start_offset": 97,
+          "end_offset": 101,
+          "type": "<ALPHANUM>",
+          "position": 21,
+          "bytes": "[66 72 6f 6d]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "brown",
+          "start_offset": 106,
+          "end_offset": 111,
+          "type": "<ALPHANUM>",
+          "position": 23,
+          "bytes": "[62 72 6f 77 6e]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "red",
+          "start_offset": 116,
+          "end_offset": 119,
+          "type": "<ALPHANUM>",
+          "position": 25,
+          "bytes": "[72 65 64]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "paint",
+          "start_offset": 120,
+          "end_offset": 125,
+          "type": "<ALPHANUM>",
+          "position": 26,
+          "bytes": "[70 61 69 6e 74]",
+          "keyword": false,
+          "positionLength": 1,
+          "termFrequency": 1
+        }
+      ]
+    }
+  }
+}
+```
+What to look for is:
+- stemming issues
+- wrong offsets and positions
+- missing or unexpected tokens
+
+### Custom Analyzer of two sentences with a filter of "lowercase" and "snowball"
+
+```bash
+# Pass in a custom analyzer
+GET /_analyze
+{
+  "tokenizer" : "standard",
+  "filter" : ["lowercase", "snowball"],
+  "explain": "true",
+  "text": ["Wearing all red, the Fox jumped out to a lead in the race over the Dog.", "All lead must be removed from the brown and red paint."]
+}
+```
+
+This outputted a TON more results. Some outputs of the Snowball (stemmer) part of analysis is:
+```json
+{
+  "detail": {
+    "custom_analyzer": true,
+    "charfilters": [],
+    "tokenizer": {
+      "name": "standard",
+      "tokens": [
+        {
+          "token": "Wearing",
+          "start_offset": 0,
+          "end_offset": 7,
+          "type": "<ALPHANUM>",
+          "position": 0,
+          "bytes": "[57 65 61 72 69 6e 67]",
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "all",
+          "start_offset": 8,
+          "end_offset": 11,
+          "type": "<ALPHANUM>",
+          "position": 1,
+          "bytes": "[61 6c 6c]",
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        {
+          "token": "red",
+          "start_offset": 12,
+          "end_offset": 15,
+          "type": "<ALPHANUM>",
+          "position": 2,
+          "bytes": "[72 65 64]",
+          "positionLength": 1,
+          "termFrequency": 1
+        },
+        ...
+```
+
+## Why did this document match this query?
+- OS has the `explain` API endpoint: explains why the document matches the query
+- OS has `explain=true` query parameter: inlines the explanations with the rest of the search results.
+
+### Explain why something is in a particular doc
+```bash
+# Explain a particular doc
+POST /searchml_test/_explain/doc_a
+{
+  "query": {
+      "bool":{
+        "must":[
+            {"query_string": {
+                "query": "dogs"
+            }}
+        ]
+      }
+  }
+}
+```
+
+The output is:
+```json
+{
+  "_index": "searchml_test",
+  "_id": "doc_a",
+  "matched": true,
+  "explanation": {
+    "value": 1.3204864,
+    "description": "max of:",
+    "details": [
+      {
+        "value": 1.3204864,
+        "description": "weight(body:dogs in 0) [PerFieldSimilarity], result of:",
+        "details": [
+          {
+            "value": 1.3204864,
+            "description": "score(freq=1.0), computed as boost * idf * tf from:",
+            "details": [
+              {
+                "value": 2.2,
+                "description": "boost",
+                "details": []
+              },
+              {
+                "value": 1.2039728,
+                "description": "idf, computed as log(1 + (N - n + 0.5) / (n + 0.5)) from:",
+                "details": [
+                  {
+                    "value": 1,
+                    "description": "n, number of documents containing term",
+                    "details": []
+                  },
+                  {
+                    "value": 4,
+                    "description": "N, total number of documents with field",
+                    "details": []
+                  }
+                ]
+              },
+              {
+                "value": 0.49853373,
+                "description": "tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:",
+                "details": [
+                  {
+                    "value": 1,
+                    "description": "freq, occurrences of term within document",
+                    "details": []
+                  },
+                  {
+                    "value": 1.2,
+                    "description": "k1, term saturation parameter",
+                    "details": []
+                  },
+                  {
+                    "value": 0.75,
+                    "description": "b, length normalization parameter",
+                    "details": []
+                  },
+                  {
+                    "value": 10,
+                    "description": "dl, length of field",
+                    "details": []
+                  },
+                  {
+                    "value": 12.75,
+                    "description": "avgdl, average length of field",
+                    "details": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+
+### Explain as part of search
+```bash
+# Explain as a query
+GET /searchml_test/_search?explain=true
+{
+  "query": {
+      "bool":{
+        "must":[
+            {"query_string": {
+                "query": "dogs OR cats OR \"bad wolf\" (house or puffed)"
+            }}
+        ]
+      }
+  }
+}
+```
+
+Partial output is below:
+```json
+{
+  "took": 12,
+  "timed_out": false,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": {
+      "value": 2,
+      "relation": "eq"
+    },
+    "max_score": 4.6301885,
+    "hits": [
+      {
+        "_shard": "[searchml_test][0]",
+        "_node": "aTFYW_tGScGCPHJazjKLsQ",
+        "_index": "searchml_test",
+        "_id": "doc_d",
+        "_score": 4.6301885,
+        "_source": {
+          "id": "doc_d",
+          "title": "The Three Little Pigs Revisted",
+          "price": "3.51",
+          "in_stock": "true",
+          "body": "The big, bad wolf huffed and puffed and blew the house down. The end.",
+          "category": "childrens"
+        },
+        "_explanation": {
+          "value": 4.6301885,
+          "description": "sum of:",
+          "details": [
+            {
+              "value": 2.3150942,
+              "description": "max of:",
+              "details": [
+                {
+                  "value": 2.3150942,
+                  "description": """weight(body:"bad wolf" in 3) [PerFieldSimilarity], result of:""",
+                  "details": [
+                    {
+                      "value": 2.3150942,
+                      "description": "score(freq=1.0), computed as boost * idf * tf from:",
+                      "details": [
+                        {
+                          "value": 2.2,
+                          "description": "boost",
+                          "details": []
+                        },
+                        {
+                          "value": 2.4079456,
+                          "description": "idf, sum of:",
+                          "details": [
+                            {
+                              "value": 1.2039728,
+                              "description": "idf, computed as log(1 + (N - n + 0.5) / (n + 0.5)) from:",
+                              "details": [
+                                {
+                                  "value": 1,
+                                  "description": "n, number of documents containing term",
+                                  "details": []
+                                },
+                                {
+                                  "value": 4,
+                                  "description": "N, total number of documents with field",
+                                  "details": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": 1.2039728,
+                              "description": "idf, computed as log(1 + (N - n + 0.5) / (n + 0.5)) from:",
+                              "details": [
+                                {
+                                  "value": 1,
+                                  "description": "n, number of documents containing term",
+                                  "details": []
+                                },
+                                {
+                                  "value": 4,
+                                  "description": "N, total number of documents with field",
+                                  "details": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": 0.43701798,
+                          "description": "tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:",
+                          "details": [
+                            {
+                              "value": 1,
+                              "description": "phraseFreq=1.0",
+                              "details": []
+                            },
+                            {
+                              "value": 1.2,
+                              "description": "k1, term saturation parameter",
+                              "details": []
+                            },
+                            {
+                              "value": 0.75,
+                              "description": "b, length normalization parameter",
+                              "details": []
+                            },
+                            {
+                              "value": 14,
+                              "description": "dl, length of field",
+                              "details": []
+                            },
+                            {
+                              "value": 12.75,
+                              "description": "avgdl, average length of field",
+                              "details": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": 2.3150942,
+              "description": "max of:",
+              "details": [
+                {
+                  "value": 2.3150942,
+                  "description": "sum of:",
+                  "details": [
+                    {
+                      "value": 1.1575471,
+                      "description": "weight(body:house in 3) [PerFieldSimilarity], result of:",
+                      "details": [
+                        {
+                          "value": 1.1575471,
+                          "description": "score(freq=1.0), computed as boost * idf * tf from:",
+                          "details": [
+                            {
+                              ...
+
+```
+
+### Query log aggregations:
+- Simple aggregations enable you to quicly see what docs were clicked on and help start to get insights about search performance.
+- Example: An aggregation operation that...
+  - First, Organizes the data into "buckets" based on the date field, with each bucket representing a 1-week interval (looking at data in weekly chunks)
+  - Then, data divided by week, and the aggregation finds the most frequent search queries (limited to top 10 queries for each week)
+  - Next, for each top 10 queries from the previous step, the aggregation finds the documents (identified by SKU or product ID in the field `sku.keyword`) that were clicked most frequently (limited to top 5 documents for each query)
+  - Outcome of the aggregation is a list that shows, for each week, what the top search queries were and which documents were clicked the most in response to those queries
+    - This is "a weekly snapshot of user behavior"
+    - These are aggregations within aggregations: top 5 docs aggregation is nested within the top 10 queries aggregation, which is nested within the buckets on date aggregation
+```bash
+# Try out some query log aggregations
+GET /bbuy_queries/_search
+{
+  "size": 0,
+  "aggs": {
+    "queries_per_week":{
+      "date_histogram": {
+        "field": "click_time",
+        "interval": "week"
+      },
+      "aggs":{
+       "Query": {
+            "terms": {
+              "size": 10, 
+              "field": "query.keyword"
+            },
+            "aggs":{
+              "Docs":{
+                "terms":{
+                  "size": 5,
+                  "field": "sku.keyword"
+                }
+              }
+            }
+        }
+      }
+    }
+  }
+}
+```
+Partial outputs are:
+```json
+{
+  "took": 2762,
+  "timed_out": false,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": {
+      "value": 10000,
+      "relation": "gte"
+    },
+    "max_score": null,
+    "hits": []
+  },
+  "aggregations": {
+    "queries_per_week": {
+      "buckets": [
+        {
+          "key_as_string": "2011-08-08 00:00:00.0",
+          "key": 1312761600000,
+          "doc_count": 118522,
+          "Query": {
+            "doc_count_error_upper_bound": 0,
+            "sum_other_doc_count": 113592,
+            "buckets": [
+              {
+                "key": "Watch the throne",
+                "doc_count": 766,
+                "Docs": {
+                  "doc_count_error_upper_bound": 0,
+                  "sum_other_doc_count": 0,
+                  "buckets": [
+                    {
+                      "key": "3168067",
+                      "doc_count": 566
+                    },
+                    {
+                      "key": "3168049",
+                      "doc_count": 182
+                    },
+                    {
+                      "key": "2965038",
+                      "doc_count": 16
+                    },
+                    {
+                      "key": "1203048",
+                      "doc_count": 2
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "lady gaga",
+                "doc_count": 550,
+                "Docs": {
+                  "doc_count_error_upper_bound": 0,
+                  "sum_other_doc_count": 0,
+                  "buckets": [
+                    {
+                      "key": "2588463",
+                      "doc_count": 550
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "iPad",
+                "doc_count": 530,
+                "Docs": {
+                  "doc_count_error_upper_bound": 0,
+                  "sum_other_doc_count": 164,
+                  "buckets": [
+                    {
+                      "key": "1945531",
+                      "doc_count": 260
+                    },
+                    {
+                      "key": "2339322",
+                      "doc_count": 32
+                    },
+                    {
+                      "key": "1945674",
+                      "doc_count": 28
+                    },
+                    {
+                      "key": "1945595",
+                      "doc_count": 24
+                    },
+                    {
+                      "key": "1918265",
+                      "doc_count": 22
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "watch the throne",
+                "doc_count": 518,
+                "Docs": {
+                  "doc_count_error_upper_bound": 0,
+                  "sum_other_doc_count": 4,
+                  "buckets": [
+                    {
+                      "key": "3168067",
+                      "doc_count": 386
+                    },
+                    {
+                      "key": "3168049",
+                      "doc_count": 120
+                    },
+                    {
+                      "key": "2965038",
+                      "doc_count": 4
+                    },
+                    {
+                      "key": "2842056",
+                      "doc_count": 2
+                    },
+                    {
+                      "key": "2884119",
+                      "doc_count": 2
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "Laptop",
+                "doc_count": 478,
+                "Docs": {
+                  "doc_count_error_upper_bound": 0,
+                  "sum_other_doc_count": 264,
+                  "buckets": [
+                    {
+                      "key": "3048064",
+                      "doc_count": 80
+                    },
+                    {
+                      "key": "2833077",
+                      "doc_count": 38
+                    },
+                    {
+                      "key": "2738738",
+                      "doc_count": 36
+                    },
+                    {
+                      "key": "2660188",
+                      "doc_count": 30
+                    },
+                    {
+                      "key": "2845071",
+                      "doc_count": 30
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "intel",
+                "doc_count": 452,
+                "Docs": {
+                  "doc_count_error_upper_bound": 0,
+                  "sum_other_doc_count": 316,
+                  "buckets": [
+                    {
+                      "key": "2833077",
+                      "doc_count": 38
+                    },
+                    {
+                      "key": "3048064",
+                      "doc_count": 36
+                    },
+                    {
+                      "key": "9755322",
+                      "doc_count": 32
+                    },
+                    {
+                      "key": "2738738",
+                      "doc_count": 16
+                    },
+                    {
+                      "key": "2845071",
+                      "doc_count": 14
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "Laptops",
+                "doc_count": 444,
+                "Docs": {
+                  "doc_count_error_upper_bound": 0,
+                  "sum_other_doc_count": 194,
+                  "buckets": [
+                    {
+                      "key": "3048064",
+                      "doc_count": 100
+                    },
+                    {
+                      "key": "2738738",
+                      "doc_count": 46
+                    },
+                    {
+                      "key": "9755322",
+                      "doc_count": 38
+                    },
+                    {
+                      "key": "2660188",
+                      "doc_count": 36
+                    },
+                    {
+                      "key": "2833077",
+                      "doc_count": 30
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "Ipad",
+                "doc_count": 400,
+                "Docs": {
+                  "doc_count_error_upper_bound": 0,
+                  "sum_other_doc_count": 138,
+                  "buckets": [
+                    {
+                      "key": "1945531",
+                      "doc_count": 186
+                    },
+                    {
+                      "key": "2339322",
+                      "doc_count": 32
+                    },
+                    {
+                      "key": "1945595",
+                      "doc_count": 18
+                    },
+                    {
+                      "key": "1945674",
+                      "doc_count": 14
+                    },
+                    {
+                      "key": "1918265",
+                      "doc_count": 12
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "ipad",
+                "doc_count": 396,
+                "Docs": {
+                  "doc_count_error_upper_bound": 0,
+                  "sum_other_doc_count": 116,
+                  "buckets": [
+                    {
+                      "key": "1945531",
+                      "doc_count": 172
+                    },
+                    {
+                      "key": "1945595",
+                      "doc_count": 52
+                    },
+                    {
+                      "key": "2339322",
+                      "doc_count": 24
+                    },
+                    {
+                      "key": "2902155",
+                      "doc_count": 18
+                    },
+                    {
+                      "key": "2339386",
+                      "doc_count": 14
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "portal2",
+                "doc_count": 394,
+                "Docs": {
+                  "doc_count_error_upper_bound": 0,
+                  "sum_other_doc_count": 0,
+                  "buckets": [
+                    {
+                      "key": "2146696",
+                      "doc_count": 394
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key_as_string": "2011-08-15 00:00:00.0",
+          "key": 1313366400000,
+          "doc_count": 145348,
+          "Query": {
+            "doc_count_error_upper_bound": 0,
+            "sum_other_doc_count": 128598,
+            "buckets": [
+              {
+                "key": "Hp touchpad",
+                "doc_count": 3554,
+                "Docs": {
+                  "doc_count_error_upper_bound": 0,
+                  "sum_other_doc_count": 162,
+                  "buckets": [
+                    {
+                      "key": "2842056",
+                      "doc_count": 2142
+                    },
+                    {
+                      "key": "2842092",
+                      "doc_count": 1124
+                    },
+                    {
+                      "key": "2947041",
+                      "doc_count": 82
+                    },
+                    {
+                      "key": "2012188",
+                      "doc_count": 26
+                    },
+                    {
+                      "key": "2817582",
+                      "doc_count": 18
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "Touchpad",
+                "doc_count": 3496,
+                "Docs": {
+                  "doc_count_error_upper_bound": 0,
+                  "sum_other_doc_count": 108,
+                  "buckets": [
+                    {
+                      "key": "2842056",
+                      "doc_count": 2204
+                    },
+                    {
+                      "key": "2842092",
+                      "doc_count": 1052
+                    },
+                    {
+                      "key": "2947041",
+                      "doc_count": 92
+                    },
+                    {
+                      "key": "2596483",
+                      "doc_count": 24
+                    },
+                    {
+                      "key": "2012188",
+                      "doc_count": 16
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "hp touchpad",
+                "doc_count": 2772,
+                "Docs": {
+                  "doc_count_error_upper_bound": 0,
+                  "sum_other_doc_count": 142,
+                  "buckets": [
+                    {
+                      "key": "2842056",
+                      "doc_count": 1664
+                    },
+                    {
+                      "key": "2842092",
+                      "doc_count": 820
+                    },
+                    {
+                      "key": "2947041",
+                      "doc_count": 106
+                    },
+                    {
+                      "key": "2817582",
+                      "doc_count": 24
+                    },
+                    {
+                      "key": "2012188",
+                      "doc_count": 16
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "touchpad",
+                "doc_count": 2564,
+                "Docs": {
+                  "doc_count_error_upper_bound": 0,
+                  "sum_other_doc_count": 132,
+                  "buckets": [
+                    {
+                      "key": "2842056",
+                      "doc_count": 1590
+                    },
+                    {
+                      "key": "2842092",
+                      "doc_count": 710
+                    },
+                    {
+                      "key": "2947041",
+                      "doc_count": 92
+                    },
+                    {
+                      "key": "2596483",
+                      "doc_count": 22
+                    },
+                    {
+                      "key": "2475916",
+                      "doc_count": 18
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "OnlineMidnightSale_Computing",
+                "doc_count": 1354,
+                "Docs": {
+                  "doc_count_error_upper_bound": 0,
+                  "sum_other_doc_count": 716,
+                  "buckets": [
+                    {
+                      "key": "2560082",
+                      "doc_count": 456
+                    },
+                    {
+                      "key": "2660188",
+                      "doc_count": 52
+                    },
+                    {
+                      "key": "2012188",
+                      "doc_count": 48
+                    },
+                    {
+                      "key": "1454049",
+                      "doc_count": 44
+                    },
+                    {
+                      "key": "2840076",
+                      "doc_count": 38
+                    }
+                  ]
+                }
+              },
+              ...
+```
