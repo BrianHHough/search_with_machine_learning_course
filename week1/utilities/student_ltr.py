@@ -1,5 +1,6 @@
 import xgboost as xgb
 from xgboost import plot_importance, plot_tree
+from collections import defaultdict
 
 
 ##### Step 3.a
@@ -122,7 +123,7 @@ def create_rescore_ltr_query(
             },
             "score_mode": "total",
             "query_weight": main_query_weight,
-            "rescore_query_weight": "2" # Magic number, but let's say LTR matches are 2x baseline matches
+            "rescore_query_weight": rescore_query_weight # "2" # Magic number, but let's say LTR matches are 2x baseline matches
         }
     }
 
@@ -140,7 +141,7 @@ def extract_logged_features(hits, query_id):
     import numpy as np
     import pandas as pd
     
-    feature_results = {}
+    feature_results = defaultdict(list) # {}
     feature_results["doc_id"] = []  # capture the doc id so we can join later
     feature_results["query_id"] = []  # ^^^
     feature_results["sku"] = []
@@ -151,6 +152,7 @@ def extract_logged_features(hits, query_id):
         feature_results["doc_id"].append(int(hit['_id']))  # capture the doc id so we can join later
         feature_results["query_id"].append(query_id)  # super redundant, but it will make it easier to join later
         feature_results["sku"].append(int(hit['_id']))
+
         # feature_results["name_match"].append(rng.random())
 
         for i in hit['fields']['_ltrlog'][0]['log_entry']:

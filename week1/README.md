@@ -3206,6 +3206,7 @@ Response:
 This output creates an image of our judgments run, which looks like this: 
 ![](./assets/ltr_toy_model.png)
 
+^ I wasn't initially able to find this file, so I used Linux to find the path to this file with: `find . -name "ltr_toy_model.png"`
 
 ### Testing if the SLTR query works:
 

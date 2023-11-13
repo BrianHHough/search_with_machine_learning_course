@@ -1171,7 +1171,7 @@ To verify the datasets are all in workspace, run the [Data Counter Script](../co
 The output should show this (note: the queries ran 2x b/c they don't have unique indexes, but this is ok):
 ```bash
 Queries:
-1698730077 05:27:57 3730538
+1698730077 05:27:57 1865269
 Products:
 1698730077 05:27:57 1275077
 ```
