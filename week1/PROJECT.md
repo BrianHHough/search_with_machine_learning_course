@@ -1014,13 +1014,573 @@ Overall, this collection of results has helped me get over the top on Hand Tuned
 
 # Level 3: Relevance Judgments on LTR
 
-Re-run your performance evaluation from the beginning of this week’s content using the different baseline queries and LTR models. 
+## Re-run your performance evaluation from the beginning of this week’s content using the different baseline queries and LTR models.
 
-How do your results look now? 
-- The
+To analyze how the OpenSearch cluster has been updated with the LTR store, I checked out the `./week1/utilities/build_ltr.py`:
 
-Are you happier with them? 
+```py
+help='The name of the LTR store.  Will be prepended with _ltr on creation'
+```
 
-Do they look reasonable?
+### Get the LTR stores
+To verify that the LTR plugin is properly installed and the LTR feature store exists, run the request in OpenSearch:
+```bash
+GET /_ltr
+```
+
+This returned the output:
+```json
+{
+  "stores": {
+    "week1": {
+      "store": "week1",
+      "index": ".ltrstore_week1",
+      "version": 2,
+      "counts": {
+        "featureset": 1,
+        "model": 1
+      }
+    },
+    "searchml_ltr": {
+      "store": "searchml_ltr",
+      "index": ".ltrstore_searchml_ltr",
+      "version": 2,
+      "counts": {
+        "featureset": 1,
+        "model": 1
+      }
+    }
+  }
+}
+```
+
+^ The response from `GET /_ltr` confirms that the LTR plugin is installed and that 2 LTR stores (`week1` and `searchml_ltr`) with each having a featureset and a model. This means I can use these stores for Learning to Rank (LTR) queries.
+
+I'm going to focus on this store -- `week1`:
+```json
+  "week1": {
+    "store": "week1",
+    "index": ".ltrstore_week1",
+    "version": 2,
+    "counts": {
+      "featureset": 1,
+      "model": 1
+    }
+  },
+```
+
+### Get the Featuresets for week1
+
+To get the featuresets in the week1 store, run:
+```bash
+GET /_ltr/week1/_featureset
+```
+
+The output is:
+```json
+{
+  "took": 1,
+  "timed_out": false,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": {
+      "value": 1,
+      "relation": "eq"
+    },
+    "max_score": 0,
+    "hits": [
+      {
+        "_index": ".ltrstore_week1",
+        "_id": "featureset-bbuy_main_featureset",
+        "_score": 0,
+        "_source": {
+          "name": "bbuy_main_featureset",
+          "type": "featureset",
+          "featureset": {
+            "name": "bbuy_main_featureset",
+            "features": [
+              {
+                "name": "name_match",
+                "params": [
+                  "keywords"
+                ],
+                "template_language": "mustache",
+                "template": {
+                  "match": {
+                    "name": "{{keywords}}"
+                  }
+                }
+              },
+              {
+                "name": "name_phrase_match",
+                "params": [
+                  "keywords"
+                ],
+                "template_language": "mustache",
+                "template": {
+                  "match_phrase": {
+                    "name": {
+                      "query": "{{keywords}}",
+                      "slop": 6
+                    }
+                  }
+                }
+              },
+              {
+                "name": "customer_review_avg_factor",
+                "params": [],
+                "template_language": "mustache",
+                "template": {
+                  "function_score": {
+                    "functions": [
+                      {
+                        "field_value_factor": {
+                          "field": "customerReviewAverage",
+                          "missing": 0
+                        }
+                      }
+                    ],
+                    "query": {
+                      "match_all": {}
+                    }
+                  }
+                }
+              },
+              {
+                "name": "customer_review_count_factor",
+                "params": [],
+                "template_language": "mustache",
+                "template": {
+                  "function_score": {
+                    "functions": [
+                      {
+                        "field_value_factor": {
+                          "field": "customerReviewCount",
+                          "missing": 0
+                        }
+                      }
+                    ],
+                    "query": {
+                      "match_all": {}
+                    }
+                  }
+                }
+              },
+              {
+                "name": "artist_name_phrase_match",
+                "params": [
+                  "keywords"
+                ],
+                "template_language": "mustache",
+                "template": {
+                  "match_phrase": {
+                    "artistName": {
+                      "query": "{{keywords}}",
+                      "slop": 6
+                    }
+                  }
+                }
+              },
+              {
+                "name": "short_description_phrase_match",
+                "params": [
+                  "keywords"
+                ],
+                "template_language": "mustache",
+                "template": {
+                  "match_phrase": {
+                    "shortDescription": {
+                      "query": "{{keywords}}",
+                      "slop": 6
+                    }
+                  }
+                }
+              },
+              {
+                "name": "long_description_phrase_match",
+                "params": [
+                  "keywords"
+                ],
+                "template_language": "mustache",
+                "template": {
+                  "match_phrase": {
+                    "longDescription": {
+                      "query": "{{keywords}}",
+                      "slop": 6
+                    }
+                  }
+                }
+              },
+              {
+                "name": "salesRankShortTerm",
+                "params": [],
+                "template_language": "mustache",
+                "template": {
+                  "function_score": {
+                    "functions": [
+                      {
+                        "filter": {
+                          "exists": {
+                            "field": "salesRankShortTerm"
+                          }
+                        },
+                        "gauss": {
+                          "salesRankShortTerm": {
+                            "origin": "1.0",
+                            "offset": "100",
+                            "scale": "10000",
+                            "decay": "0.1"
+                          }
+                        }
+                      },
+                      {
+                        "filter": {
+                          "bool": {
+                            "must_not": {
+                              "exists": {
+                                "field": "salesRankShortTerm"
+                              }
+                            }
+                          }
+                        },
+                        "script_score": {
+                          "script": "if (doc['salesRankShortTerm'] == null || doc['salesRankShortTerm'].size() == 0  ){return 0.0}"
+                        }
+                      }
+                    ],
+                    "query": {
+                      "match_all": {}
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}
+```
+
+### Get the model:
+
+Running 
+```bash
+GET /_ltr/week1/_model
+```
+This returns this:
+```json
+{
+  "took": 1,
+  "timed_out": false,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": {
+      "value": 1,
+      "relation": "eq"
+    },
+    "max_score": 0,
+    "hits": [
+      {
+        "_index": ".ltrstore_week1",
+        "_id": "model-ltr_model",
+        "_score": 0,
+        "_source": {
+          "name": "ltr_model",
+          "type": "model",
+          "model": {
+            "name": "ltr_model",
+            "feature_set": {
+              "name": "bbuy_main_featureset",
+              "features": [
+                {
+                  "name": "name_match",
+                  "params": [
+                    "keywords"
+                  ],
+                  "template_language": "mustache",
+                  "template": {
+                    "match": {
+                      "name": "{{keywords}}"
+                    }
+                  }
+                },
+                {
+                  "name": "name_phrase_match",
+                  "params": [
+                    "keywords"
+                  ],
+                  "template_language": "mustache",
+                  "template": {
+                    "match_phrase": {
+                      "name": {
+                        "query": "{{keywords}}",
+                        "slop": 6
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "customer_review_avg_factor",
+                  "params": [],
+                  "template_language": "mustache",
+                  "template": {
+                    "function_score": {
+                      "functions": [
+                        {
+                          "field_value_factor": {
+                            "field": "customerReviewAverage",
+                            "missing": 0
+                          }
+                        }
+                      ],
+                      "query": {
+                        "match_all": {}
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "customer_review_count_factor",
+                  "params": [],
+                  "template_language": "mustache",
+                  "template": {
+                    "function_score": {
+                      "functions": [
+                        {
+                          "field_value_factor": {
+                            "field": "customerReviewCount",
+                            "missing": 0
+                          }
+                        }
+                      ],
+                      "query": {
+                        "match_all": {}
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "artist_name_phrase_match",
+                  "params": [
+                    "keywords"
+                  ],
+                  "template_language": "mustache",
+                  "template": {
+                    "match_phrase": {
+                      "artistName": {
+                        "query": "{{keywords}}",
+                        "slop": 6
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "short_description_phrase_match",
+                  "params": [
+                    "keywords"
+                  ],
+                  "template_language": "mustache",
+                  "template": {
+                    "match_phrase": {
+                      "shortDescription": {
+                        "query": "{{keywords}}",
+                        "slop": 6
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "long_description_phrase_match",
+                  "params": [
+                    "keywords"
+                  ],
+                  "template_language": "mustache",
+                  "template": {
+                    "match_phrase": {
+                      "longDescription": {
+                        "query": "{{keywords}}",
+                        "slop": 6
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "salesRankShortTerm",
+                  "params": [],
+                  "template_language": "mustache",
+                  "template": {
+                    "function_score": {
+                      "functions": [
+                        {
+                          "filter": {
+                            "exists": {
+                              "field": "salesRankShortTerm"
+                            }
+                          },
+                          "gauss": {
+                            "salesRankShortTerm": {
+                              "origin": "1.0",
+                              "offset": "100",
+                              "scale": "10000",
+                              "decay": "0.1"
+                            }
+                          }
+                        },
+                        {
+                          "filter": {
+                            "bool": {
+                              "must_not": {
+                                "exists": {
+                                  "field": "salesRankShortTerm"
+                                }
+                              }
+                            }
+                          },
+                          "script_score": {
+                            "script": "if (doc['salesRankShortTerm'] == null || doc['salesRankShortTerm'].size() == 0  ){return 0.0}"
+                          }
+                        }
+                      ],
+                      "query": {
+                        "match_all": {}
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "model": {
+              "type": "model/xgboost+json",
+              "definition": """{"objective":"reg:logistic", "splits": [  { "nodeid": 0, "depth": 0, "split": "name_phrase_match", "split_condition": 6.78999996, "yes": 1, "no": 2, "missing": 2 , "children": [
+    { "nodeid": 1, "depth": 1, "split": "customer_review_count_factor", "split_condition": 241, "yes": 3, "no": 4, "missing": 4 , "children": [
+      { "nodeid": 3, "depth": 2, "split": "name_match", "split_condition": 0.326499999, "yes": 7, "no": 8, "missing": 8 , "children": [
+        { "nodeid": 7, "depth": 3, "split": "artist_name_phrase_match", "split_condition": 7.87510014, "yes": 15, "no": 16, "missing": 16 , "children": [
+...
+}
+```
+
+Under hits._source.model.feature_set.name: "bbuy_main_featureset"
+Under hits._source.model.name: "ltr_model"
+
+
+I tried to then run some queries, first without the LTR:
+
+```bash
+GET bbuy_products/_search
+{
+  "size": 5,
+  "from": 5,
+  "query": {
+    "multi_match": {
+      "query": "tv",
+      "fields": ["name", "shortDescription", "longDescription", "categoryPath"]
+    }
+  }
+}
+```
+
+The results live in this [results-no-ltr.py file](./data/results-no-ltr.py). Abbridged outputs are here:
+```bash
+"""Bush - TV Stand for 43" TVs"""
+"As Seen On TV - TV Jupiter Jack"
+"""Sauder - TV Stand for TVs Up to 36" and Some 40" TVs"""
+"BDI - Vector TV Stand for Tube TVs or Flat-Panel TVs"
+"Not TV - CD"
+"Tv - CD"
+"On Tv/ - CD"
+"The Heights [TV Soundtrack] - TV O.S.T. - CASSETTE"
+"No, Honestly [TV Series] - TV Show - VHS"
+"Benji [3 Pk / TV] - TV - DVD"
+```
+
+Then I tried to run with the LTR:
+
+```bash
+POST /bbuy_products/_search
+{
+  "query": {
+    "sltr": {
+      "_name": "my_ltr_query",
+      "featureset": "week1_bbuy_main_featureset", 
+      "model": "week1_ltr_model", 
+      "params": {
+        "keywords": "tv"
+      }
+    }
+  }
+}
+
+POST /bbuy_products/_search
+{
+  "query": {
+    "sltr": {
+      "_name": "my_ltr_query",
+      "featureset": "bbuy_main_featureset", 
+      "model": "ltr_model", 
+      "params": {
+        "keywords": "tv"
+      }
+    }
+  }
+}
+```
+
+But these errored -- probably because I need to train the data on this:
+```json
+{
+  "error": {
+    "root_cause": [
+      {
+        "type": "query_shard_exception",
+        "reason": "failed to create query: [.ltrstore] IndexNotFoundException[no such index [.ltrstore]]",
+        "index": "bbuy_products",
+        "index_uuid": "6aVqkMPEQPOw1arA2Y4W1A"
+      }
+    ],
+    "type": "search_phase_execution_exception",
+    "reason": "all shards failed",
+    "phase": "query",
+    "grouped": true,
+    "failed_shards": [
+      {
+        "shard": 0,
+        "index": "bbuy_products",
+        "node": "aTFYW_tGScGCPHJazjKLsQ",
+        "reason": {
+          "type": "query_shard_exception",
+          "reason": "failed to create query: [.ltrstore] IndexNotFoundException[no such index [.ltrstore]]",
+          "index": "bbuy_products",
+          "index_uuid": "6aVqkMPEQPOw1arA2Y4W1A",
+          "caused_by": {
+            "type": "i_o_exception",
+            "reason": "[.ltrstore] IndexNotFoundException[no such index [.ltrstore]]",
+            "caused_by": {
+              "type": "index_not_found_exception",
+              "reason": "no such index [.ltrstore]",
+              "index": ".ltrstore",
+              "resource.id": ".ltrstore",
+              "resource.type": "index_expression",
+              "index_uuid": "_na_"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "status": 400
+}
+```
 
 
