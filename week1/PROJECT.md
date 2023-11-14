@@ -1505,7 +1505,186 @@ The results live in this [results-no-ltr.py file](./data/results-no-ltr.py). Abb
 "Benji [3 Pk / TV] - TV - DVD"
 ```
 
-Then I tried to run with the LTR:
+Then I ran this with the LTR:
+
+```bash
+POST /bbuy_products/_search
+{
+  "query": {
+    "match": {
+      "name": "tv"
+    }
+  },
+  "rescore": {
+    "window_size": 500,
+    "query": {
+      "rescore_query": {
+        "sltr": {
+          "params": {
+            "keywords": "tv"
+          },
+          "model": "ltr_model",
+          "store": "week1"
+        }
+      },
+      "query_weight": 1,
+      "rescore_query_weight": 1
+    }
+  }
+}
+```
+
+The results live in this [results-ltr-1.py file](./data/results-ltr-1.py file). Abbridged outputs are here:
+```bash
+"OmniMount - TV Stand for TVs"
+"Honeymooners 1: TV or Not TV - TV Show - VHS"
+"""Bush - TV Stand for 36" TVs"""
+"""Bush - TV Stand for 36" TVs"""
+"""Bush - TV Stand for 27" TVs"""
+"""Bush - TV Stand for 43" TVs"""
+"As Seen On TV - TV Jupiter Jack"
+"""Sauder - TV Stand for TVs Up to 36" and Some 40" TVs"""
+"BDI - Vector TV Stand for Tube TVs or Flat-Panel TVs"
+"Deco - TV Stand for TVs Up to 42\""
+```
+
+Some other examples:
+
+Filter with LTR by a specific category:
+```bash
+POST /bbuy_products/_search
+{
+  "query": {
+    "bool": {
+      "must": {
+        "match": {
+          "name": "tv"
+        }
+      }
+      ,
+      "filter": {
+        "match": {
+          "categoryPath": "TV & Home Theater"
+        }
+      }
+    }
+  },
+  "rescore": {
+    "window_size": 500,
+    "query": {
+      "rescore_query": {
+        "sltr": {
+          "params": {
+            "keywords": "tv"
+          },
+          "model": "ltr_model",
+          "store": "week1"
+        }
+      },
+      "query_weight": 1,
+      "rescore_query_weight": 1
+    }
+  }
+}
+```
+
+The results live in this [results-ltr-2.py file](./data/results-ltr-2.py file). Abbridged outputs are here:
+```bash
+"OmniMount - TV Stand for TVs"
+"Honeymooners 1: TV or Not TV - TV Show - VHS"
+"""Bush - TV Stand for 36" TVs"""
+"As Seen On TV - TV Jupiter Jack"
+"""Bush - TV Stand for 27" TVs"""
+"""Bush - TV Stand for 43" TVs"""
+"""Bush - TV Stand for 36" TVs"""
+"""Sauder - TV Stand for TVs Up to 36" and Some 40" TVs"""
+"BDI - Vector TV Stand for Tube TVs or Flat-Panel TVs"
+"Sauder - TV Stand for Tube TVs and Flat-Panel TVs Up to 47\""
+```
+
+One more LTR query - looking for panasonic TVs, but no stands, VHS, cassette stuff:
+```bash
+POST /bbuy_products/_search
+{
+  "query": {
+    "bool": {
+      "must": {
+        "match": {
+          "name": "panasonic tv"
+        }
+      },
+      "must_not": [
+        {
+          "match": {
+            "name": "stand"
+          }
+        },
+        {
+          "match": {
+            "name": "cam"
+          }
+        },
+        {
+          "match": {
+            "name": "vhs"
+          }
+        },
+        {
+          "match": {
+            "name": "DVD"
+          }
+        },
+        {
+          "match": {
+            "name": "cassette"
+          }
+        }
+      ]
+    }
+  },
+  "rescore": {
+    "window_size": 500,
+    "query": {
+      "rescore_query": {
+        "sltr": {
+          "params": {
+            "keywords": "tv"
+          },
+          "model": "ltr_model",
+          "store": "week1"
+        }
+      },
+      "query_weight": 1,
+      "rescore_query_weight": 1
+    }
+  }
+}
+```
+
+The results live in this [results-ltr-3.py file](./data/results-ltr-3.py file). Abbridged outputs are here:
+```bash
+"""Panasonic - 27" Stereo TV"""
+"""Panasonic - 32" Stereo TV"""
+"""Panasonic 54" TV & BD Player"""
+"Panasonic - TV Adapter for Network Cameras"
+"""Panasonic - Panasonic 27" Flat-Tube Stereo TV - Silver"""
+"""Panasonic - TV Pedestal for Panasonic TH-65PZ750U 65" Plasma HDTVs"""
+"Panasonic - Pedestal for Panasonic TH-65PZ85OU Flat-Panel TVs - Black"
+"""Panasonic - 27" Stereo TV with Video Input"""
+"""Panasonic - 36" Stereo TV with Picture-In-Picture"""
+"""Panasonic - 25" Stereo TV with Built-In FM Radio"""
+```
+
+
+### Analysis of non-LTR vs. LTR
+- Non-LTR Results: The initial query without LTR (results-no-ltr.py) returned a mix of relevant and irrelevant results. While it included items related to TVs, such as TV stands and related products, it also returned completely unrelated items like CDs, DVDs, and VHS tapes. This indicates that the basic multi-match query was not sufficiently focused on the specific context of TVs.
+- LTR Results: In the LTR-enhanced query (results-ltr-1.py), the results seem more focused on products directly related to TVs. While the list still includes several TV stands, which are relevant but not exactly TVs, the absence of completely off-topic items like CDs and VHS tapes is noticeable. This suggests that the LTR model is indeed re-ranking the results to be more relevant to the search query "tv".
+
+
+
+### 🐞 Debugging: `failed to create query: [.ltrstore] IndexNotFoundException[no such index [.ltrstore]]`
+
+I tried to run queries with the LTR:
 
 ```bash
 POST /bbuy_products/_search
@@ -1537,7 +1716,7 @@ POST /bbuy_products/_search
 }
 ```
 
-But these errored -- probably because I need to train the data on this:
+But these errored -- it needed the "store" attribute, which is not present here:
 ```json
 {
   "error": {
@@ -1583,4 +1762,45 @@ But these errored -- probably because I need to train the data on this:
 }
 ```
 
+By adding the `store` attribute to the `sltr` query, then it worked:
 
+```bash
+POST /bbuy_products/_search
+{
+  "query": {
+    "match": {
+      "name": "tv"
+    }
+  },
+  "rescore": {
+    "window_size": 500,
+    "query": {
+      "rescore_query": {
+        "sltr": {
+          "params": {
+            "keywords": "tv"
+          },
+          "model": "ltr_model",
+          "store": "week1"
+        }
+      },
+      "query_weight": 1,
+      "rescore_query_weight": 1
+    }
+  }
+}
+```
+
+The results live in this [results-ltr-1.py file](./data/results-ltr-1.py file). Abbridged outputs are here:
+```bash
+"OmniMount - TV Stand for TVs"
+"Honeymooners 1: TV or Not TV - TV Show - VHS"
+"""Bush - TV Stand for 36" TVs"""
+"""Bush - TV Stand for 36" TVs"""
+"""Bush - TV Stand for 27" TVs"""
+"""Bush - TV Stand for 43" TVs"""
+"As Seen On TV - TV Jupiter Jack"
+"""Sauder - TV Stand for TVs Up to 36" and Some 40" TVs"""
+"BDI - Vector TV Stand for Tube TVs or Flat-Panel TVs"
+"Deco - TV Stand for TVs Up to 42\""
+```
