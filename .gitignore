@@ -137,8 +137,11 @@ dmypy.json
 .pyre/
 
 
-# Files
+# Week 2 Files
 week2/exercises/cooking/cooking.stackexchange.tar.gz
 week2/exercises/cooking/model_cooking.bin
 
 week2/exercises/synonyms/wiki.bin
+
+product_classifier.bin
+product_classifier.vec
