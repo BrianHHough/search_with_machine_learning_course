@@ -135,3 +135,10 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+
+# Files
+week2/exercises/cooking/cooking.stackexchange.tar.gz
+week2/exercises/cooking/model_cooking.bin
+
+week2/exercises/synonyms/wiki.bin
