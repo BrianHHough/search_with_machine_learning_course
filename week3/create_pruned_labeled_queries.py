@@ -44,14 +44,14 @@ for child in root:
     if leaf_id != root_category_id:
         categories.append(leaf_id)
         parents.append(cat_path_ids[-2])
-parents_df = pd.DataFrame(list(zip(categories, parents)), columns =['category', 'parent'])
+parents_df = pd.DataFrame(list(zip(categories, parents)), columns=['category', 'parent'])
 
 # Read the training data into pandas, only keeping queries with non-root categories in our category tree.
 queries_df = pd.read_csv(queries_file_name)[['category', 'query']]
 queries_df = queries_df[queries_df['category'].isin(categories)]
 
-# IMPLEMENT ME: Convert queries to lowercase, and optionally implement other normalization, like stemming
-    # Normalize data from the query object
+# Normalize queries
+# Normalize data from the query object
 def normalize_query(query):
     query = query.lower()
     query = re.sub('[^a-z0-9]', ' ', query)
@@ -62,9 +62,7 @@ def normalize_query(query):
 # Apply normalization
 queries_df['query'] = queries_df['query'].apply(normalize_query)
 
-
-# IMPLEMENT ME: Roll up categories to ancestors to satisfy the minimum number of queries per category.
-    # Compute query counts for each category
+# Compute query counts for each category
 query_counts = queries_df['category'].value_counts().rename('query_count')
 queries_df = queries_df.merge(query_counts, left_on='category', right_index=True)
 
@@ -84,7 +82,7 @@ while True:
     # Recompute the query counts
     query_counts = queries_df['category'].value_counts().rename('query_count')
 
-# Create labels in fastText format.
+# Create labels in FastText format.
 queries_df['label'] = '__label__' + queries_df['category']
 
 # Output labeled query data as a space-separated file, making sure that every category is in the taxonomy.
